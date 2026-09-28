@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "powerup",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  // Static client (built by Vite) is served as a single-page app; only /api/* hits the Worker first.
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  // One Durable Object instance per poker table: it owns the deck, the players and the WebSockets.
+  "durable_objects": {
+    "bindings": [{ "name": "TABLES", "class_name": "PowerUpTable" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PowerUpTable"] }],
+  "observability": { "enabled": true }
+}

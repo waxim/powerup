@@ -75,7 +75,7 @@ html,
 body {
   margin: 0;
   min-height: 100%;
-  background: var(--bg);
+  background: var(--bg-2);
 }
 
 body {
@@ -504,6 +504,11 @@ input[type="range"] {
 
 .showcase {
   margin-top: 26px;
+  /* Break out of the narrow form column so the ten powers sit in two rows of five on desktop. */
+  width: min(calc(100vw - 32px), 1000px);
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .showcase-head {

@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "description": "PowerUp: Texas hold'em with game-changing powers. Accountless home games on Cloudflare.",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

@@ -2924,3 +2924,10 @@ button.power {
     padding: 0 6px;
   }
 }
+
+/* Portrait: the centre block (board + pot) sits a little lower so the board clears the upper seats. */
+@media (orientation: portrait) {
+  .center {
+    top: 51%;
+  }
+}

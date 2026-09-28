@@ -282,9 +282,10 @@ export class Game {
     this.log(now, "system", "Everyone left, so the game is paused. Any player can resume it.");
   }
 
-  resume(byId: string, now: number): void {
+  /** The host lifts their own pause; anyone seated can resume an auto-pause, or a pause whose host has gone. */
+  resume(byId: string, now: number, opts: { hostAbsent?: boolean } = {}): void {
     const s = this.s;
-    if (s.autoPaused) this.player(byId);
+    if (s.autoPaused || opts.hostAbsent) this.player(byId);
     else this.requireHost(byId);
     if (!s.paused || s.pausedAt === null) return;
     const delta = now - s.pausedAt;
@@ -452,7 +453,7 @@ export class Game {
         streetBet: 0,
         totalBet: 0,
         acted: false,
-        actedSeq: -1,
+        actedAt: 0,
         lastAction: null,
         intel: false,
         showCards: false,
@@ -464,7 +465,6 @@ export class Game {
       bb,
       currentBet: bb,
       minRaise: bb,
-      fullRaiseSeq: 0,
       toAct: null,
       turnDeadline: null,
       empStreet: null,
@@ -596,7 +596,7 @@ export class Game {
     const p = this.player(playerId);
     const toCall = Math.max(0, this.amountToMatch(hp) - hp.streetBet);
     const maxRaiseTo = hp.streetBet + p.chips;
-    const reopened = !hp.acted || hp.actedSeq < h.fullRaiseSeq;
+    const reopened = !hp.acted || h.currentBet - hp.actedAt >= h.minRaise;
     const canRaise = reopened && this.othersCanBet(hp) && p.chips > toCall;
     return {
       canFold: toCall > 0,
@@ -657,10 +657,8 @@ export class Game {
         if (to < legal.minRaiseTo) throw new GameError(`The minimum is ${legal.minRaiseTo}`);
         const raiseBy = to - h.currentBet;
         this.commit(hp, to - hp.streetBet);
-        if (raiseBy >= h.minRaise) {
-          h.minRaise = raiseBy;
-          h.fullRaiseSeq++;
-        }
+        // A short all-in doesn't change the minimum raise.
+        if (raiseBy >= h.minRaise) h.minRaise = raiseBy;
         h.currentBet = Math.max(h.currentBet, to);
         const verb = legal.isBet ? "bets" : "raises to";
         hp.lastAction = hp.allIn ? `All-in ${to}` : legal.isBet ? `Bet ${to}` : `Raise ${to}`;
@@ -671,7 +669,7 @@ export class Game {
         throw new GameError("Unknown action");
     }
     hp.acted = true;
-    hp.actedSeq = h.fullRaiseSeq;
+    hp.actedAt = h.currentBet;
     if (hp.allIn) this.lockBoard(now, p);
     this.touch(now);
     this.advance(now, hp.seat);
@@ -708,12 +706,11 @@ export class Game {
     for (const hp of h.players) {
       hp.streetBet = 0;
       hp.acted = false;
-      hp.actedSeq = -1;
+      hp.actedAt = 0;
       if (!hp.folded) hp.lastAction = hp.allIn ? "All-in" : null;
     }
     h.currentBet = 0;
     h.minRaise = h.bb;
-    h.fullRaiseSeq = 0;
     h.street = next;
     const count = next === "flop" ? 3 : 1;
     const cards: Card[] = [];
@@ -1152,6 +1149,9 @@ export class Game {
           const at = h.deck.indexOf(card);
           if (at >= 0) h.deck.splice(at, 1);
           h.muck.push(card);
+          // Opponents learn that a card was discarded, not which one, so an Engineer-revealed top card
+          // stops being public either way.
+          h.knownTop = null;
           this.log(now, "power", `${p.name} discards one of the top cards`, { playerId: p.id, power: "scanner" });
         } else {
           throw new GameError("Choose a card to discard, or keep both");

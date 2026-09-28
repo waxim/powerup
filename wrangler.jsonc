@@ -3,8 +3,13 @@
   "name": "powerup",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-09-01",
+  // `wrangler deploy` builds the client first, so a bare `npx wrangler deploy` (the Workers Builds default)
+  // works from a fresh clone. When `npm run build` has already run, Wrangler uses the config the Vite plugin
+  // generated in dist/ instead (the Vite plugin ignores this `build` section).
+  "build": { "command": "npm run build" },
   // Static client (built by Vite) is served as a single-page app; only /api/* hits the Worker first.
   "assets": {
+    "directory": "./dist/client",
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
   },

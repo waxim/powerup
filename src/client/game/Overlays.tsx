@@ -133,10 +133,17 @@ export function Overlays({ view, send, serverNow }: Props) {
   }
 
   if (view.paused) {
-    const canResume = isHost || (view.autoPaused && !!you);
+    const hostHere = view.players.some((p) => p.isHost && p.connected);
+    const canResume = isHost || ((view.autoPaused || !hostHere) && !!you);
     return (
       <Modal title="Paused" icon={<Pause size={22} aria-hidden />}>
-        <p>{view.autoPaused ? "Everyone left, so the game paused itself." : "The host has paused the game. The clock is stopped."}</p>
+        <p>
+          {view.autoPaused
+            ? "Everyone left, so the game paused itself."
+            : hostHere
+              ? "The host has paused the game. The clock is stopped."
+              : "The host paused the game and has gone offline. Anyone can resume."}
+        </p>
         {canResume && (
           <div className="modal-actions">
             <button type="button" className="btn btn-primary" onClick={() => send({ t: "resume" })}>

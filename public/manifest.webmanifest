@@ -1,0 +1,14 @@
+{
+  "name": "PowerUp",
+  "short_name": "PowerUp",
+  "description": "Texas hold'em with game-changing powers. Create a table, share the link, play with friends.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#050814",
+  "theme_color": "#070b1a",
+  "icons": [
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

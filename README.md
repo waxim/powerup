@@ -113,12 +113,9 @@ Wrangler prints your URL (`https://powerup.<your-subdomain>.workers.dev`). Add a
 *Workers & Pages → powerup → Settings → Domains & Routes*.
 
 **Or from GitHub (Workers Builds)**: in the Cloudflare dashboard go to *Workers & Pages → Create →
-Import a repository*, pick this repo, and set:
-
-- Build command: `npm run build`
-- Deploy command: `npx wrangler deploy`
-
-Every push to the production branch then deploys automatically.
+Import a repository* and pick this repo. The defaults work as-is: `npx wrangler deploy` runs the build
+itself (see `build.command` in `wrangler.jsonc`). You can also set the build command to `npm run build`
+explicitly; either way works. Every push to the production branch then deploys automatically.
 
 ## Credits
 

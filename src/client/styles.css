@@ -1121,7 +1121,7 @@ button.power {
 }
 
 .power-compact {
-  width: 76px;
+  width: 80px;
   min-height: 0;
   height: 96px;
   padding: 8px 4px 6px;
@@ -1356,6 +1356,14 @@ button.power {
   transform: translate(-50%, -50%);
 }
 
+/* Keep every seat fully inside the table area, whatever its position and the screen size. */
+.seat {
+  --half-w: 64px;
+  --half-h: 42px;
+  left: clamp(var(--half-w), calc(var(--px) * 1%), calc(100% - var(--half-w)));
+  top: clamp(var(--half-h), calc(var(--py) * 1%), calc(100% - var(--half-h)));
+}
+
 /* Seats */
 .seat {
   display: flex;
@@ -1364,7 +1372,7 @@ button.power {
   gap: 3px;
   z-index: 5;
   width: max-content;
-  max-width: 34vw;
+  max-width: calc(var(--half-w) * 2);
 }
 
 .seat-cards {
@@ -1469,6 +1477,7 @@ button.power {
 
 .seat-info {
   min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   line-height: 1.1;
@@ -2001,6 +2010,7 @@ button.power {
 
 .my-powers {
   grid-area: powers;
+  min-height: max-content;
   display: flex;
   gap: 8px;
   justify-content: center;
@@ -2285,10 +2295,14 @@ button.power {
 /* Responsive                                                          */
 /* ------------------------------------------------------------------ */
 @media (min-aspect-ratio: 1/1) {
-  .seat,
   .bet {
     left: calc(var(--lx) * 1%);
     top: calc(var(--ly) * 1%);
+  }
+
+  .seat {
+    left: clamp(var(--half-w), calc(var(--lx) * 1%), calc(100% - var(--half-w)));
+    top: clamp(var(--half-h), calc(var(--ly) * 1%), calc(100% - var(--half-h)));
   }
 
   .felt {
@@ -2296,9 +2310,6 @@ button.power {
     border-radius: 999px;
   }
 
-  .seat {
-    max-width: 22vw;
-  }
 }
 
 @media (min-width: 720px) {
@@ -2562,10 +2573,6 @@ button.power {
   box-shadow: 0 0 0 2px #0b1026;
 }
 
-.power-compact {
-  width: 80px;
-}
-
 .power-compact .power-name {
   font-size: 0.56rem;
   letter-spacing: 0.02em;
@@ -2779,5 +2786,136 @@ button.power {
   from {
     opacity: 0;
     transform: translateY(12px) scale(0.95);
+  }
+}
+
+/* Seat footprint per screen size (used to keep seats on the table). */
+@media (min-width: 720px) {
+  .seat {
+    --half-w: 84px;
+    --half-h: 46px;
+  }
+}
+
+@media (min-width: 1100px) and (min-height: 620px) {
+  .seat {
+    --half-w: 112px;
+    --half-h: 56px;
+  }
+}
+
+/* Landscape phones: small seats so six fit around a short table. */
+@media (orientation: landscape) and (max-height: 540px) {
+  .seat {
+    --half-w: 62px;
+    --half-h: 36px;
+  }
+
+  .seat-powers,
+  .seat-tag {
+    font-size: 0.66rem;
+  }
+
+  .seat-powers {
+    display: none;
+  }
+
+  .seat-name,
+  .seat-line {
+    font-size: 0.72rem;
+  }
+
+  .seat-stack {
+    font-size: 0.74rem;
+  }
+
+  .power-compact {
+    width: 62px;
+    height: 80px;
+  }
+
+  .power-compact .power-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .power-compact .power-name {
+    font-size: 0.5rem;
+  }
+
+  .power-compact .power-name.is-long {
+    font-size: 0.42rem;
+  }
+}
+
+/* Very narrow phones. */
+@media (max-width: 360px) {
+  .seat {
+    --half-w: 54px;
+    --half-h: 38px;
+  }
+
+  .seat-name,
+  .seat-line {
+    font-size: 0.7rem;
+  }
+
+  .seat-stack {
+    font-size: 0.72rem;
+  }
+
+  .seat-avatar {
+    width: 26px;
+    height: 26px;
+    font-size: 0.62rem;
+  }
+
+  .power-compact {
+    width: 64px;
+  }
+}
+
+/*
+ * Compact tables: many seats on a small screen. Face-down card backs and bet chips are hidden
+ * (seat tags already say "Call 20", and the pot shows the total) so the board stays visible.
+ */
+@media (max-height: 620px) and (orientation: portrait), (orientation: landscape) and (max-height: 540px), (max-width: 360px) {
+  .seats-4 .seat-cards .pcard-back,
+  .seats-5 .seat-cards .pcard-back,
+  .seats-6 .seat-cards .pcard-back,
+  .seats-4 .bet,
+  .seats-5 .bet,
+  .seats-6 .bet {
+    display: none;
+  }
+
+  .seats-4 .seat-cards,
+  .seats-5 .seat-cards,
+  .seats-6 .seat-cards {
+    margin-bottom: -4px;
+  }
+
+  .seats-5 .seat-avatar,
+  .seats-6 .seat-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 0.56rem;
+  }
+
+  .seats-5 .seat,
+  .seats-6 .seat {
+    --half-h: 30px;
+  }
+
+  .seats-5 .seat-box,
+  .seats-6 .seat-box {
+    padding: 3px 7px 3px 3px;
+    border-radius: 10px;
+  }
+
+  .seats-5 .seat-tag,
+  .seats-6 .seat-tag {
+    font-size: 0.62rem;
+    padding: 0 6px;
   }
 }

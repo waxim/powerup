@@ -185,5 +185,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { t: "state"; view: TableView }
   | { t: "joined"; playerId: string; token: string }
+  /** You left or were removed; forget the seat token. */
+  | { t: "left" }
   | { t: "error"; message: string }
   | { t: "notfound" };

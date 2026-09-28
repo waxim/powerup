@@ -4,7 +4,7 @@ import { MODE_RULES, POWERS, POWER_TYPES, modeForPlayers } from "../../shared/po
 import { rebuysLabel } from "../../shared/settings";
 import { chips, initials } from "../lib/format";
 import { linkHandler } from "../lib/router";
-import { clearSeatToken, getSavedName, saveName } from "../lib/storage";
+import { getSavedName, saveName } from "../lib/storage";
 import type { TableConnection } from "../lib/useTable";
 import { Logo } from "./Home";
 
@@ -63,10 +63,8 @@ export function Lobby({ conn }: { conn: TableConnection }) {
     conn.send({ t: "join", name: trimmed });
   };
 
-  const leave = () => {
-    conn.send({ t: "leave" });
-    clearSeatToken(v.id);
-  };
+  // The seat token is cleared when the server confirms (the "left" message).
+  const leave = () => conn.send({ t: "leave" });
 
   return (
     <div className="page lobby">

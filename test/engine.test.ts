@@ -483,3 +483,58 @@ describe("auto pause", () => {
     expect(() => game.resume(notHost, clock.now)).toThrow(/host/);
   });
 });
+
+describe("review regressions", () => {
+  it("several short all-ins that add up to a full raise reopen the betting (TDA 47)", () => {
+    // Blinds 10/20, button seat 0 -> SB 1, BB 2, UTG 3, MP 4, CO 5.
+    const ctx = startGame(6, {}, 3, (g) => {
+      g.s.buttonSeat = 0;
+      g.s.players.find((p) => p.seat === 5)!.chips = 150;
+      g.s.players.find((p) => p.seat === 0)!.chips = 200;
+    });
+    const { game, clock } = ctx;
+    const [btn, sb, bb, utg, mp, co] = seats(game);
+    game.act(utg, "raise", 100, clock.now); // full raise of 80
+    game.act(mp, "call", undefined, clock.now); // still has chips behind
+    game.act(co, "raise", 150, clock.now); // all-in, +50: not a full raise on its own
+    game.act(btn, "raise", 200, clock.now); // all-in, +50: together +100 over the 100 bet
+    game.act(sb, "fold", undefined, clock.now);
+    game.act(bb, "fold", undefined, clock.now);
+    for (const id of [utg, mp]) {
+      expect(toAct(game)).toBe(id);
+      expect(game.legal(id)!.canRaise).toBe(true);
+      game.act(id, "call", undefined, clock.now);
+    }
+  });
+
+  it("a single short all-in still doesn't reopen the betting", () => {
+    const ctx = startGame(6, {}, 3, (g) => {
+      g.s.buttonSeat = 0;
+      g.s.players.find((p) => p.seat === 5)!.chips = 150;
+    });
+    const { game, clock } = ctx;
+    const [btn, sb, bb, utg, mp, co] = seats(game);
+    game.act(utg, "raise", 100, clock.now);
+    game.act(mp, "call", undefined, clock.now);
+    game.act(co, "raise", 150, clock.now); // +50 < 80
+    game.act(btn, "fold", undefined, clock.now);
+    game.act(sb, "fold", undefined, clock.now);
+    game.act(bb, "fold", undefined, clock.now);
+    expect(game.legal(utg)!.canRaise).toBe(false);
+  });
+
+  it("any seated player can resume a host pause once the host has gone", () => {
+    const { game, clock, ids } = startGame(3);
+    game.pause(game.s.hostId, clock.now);
+    const other = ids.find((id) => id !== game.s.hostId)!;
+    expect(() => game.resume(other, clock.now)).toThrow(/host/);
+    game.resume(other, clock.now, { hostAbsent: true });
+    expect(game.s.paused).toBe(false);
+  });
+
+  it("keeps the 10 big blind minimum even at the chip cap", () => {
+    const s = sanitizeSettings({ startingSmallBlind: 1_000_000, startingChips: 99_000_000 });
+    expect(s.startingSmallBlind).toBe(500_000);
+    expect(s.startingChips).toBeGreaterThanOrEqual(s.startingSmallBlind * 20);
+  });
+});

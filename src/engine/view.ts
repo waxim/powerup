@@ -108,7 +108,7 @@ export function buildView(game: Game, viewerId: string | null, now: number, conn
         return { id: c.id, type: c.type, cost: powerCost(c.type, mode), playable: reason === null, reason };
       }),
       energy: viewer.energy,
-      intelTop: hp?.intel && h && h.phase !== "done" ? h.deck[0] ?? null : null,
+      intelTop: hp?.intel && !hp.folded && h && h.phase !== "done" ? h.deck[0] ?? null : null,
       scanner: pending?.kind === "scanner" ? pending.cards : null,
       upgrade: pending?.kind === "upgrade",
       engineer: pending?.kind === "engineer" ? pending.cards : null,

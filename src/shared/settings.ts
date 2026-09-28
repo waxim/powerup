@@ -54,7 +54,8 @@ export function cleanName(value: unknown, maxLength = 20): string {
 /** Coerce untrusted input into valid settings. */
 export function sanitizeSettings(input: Partial<Record<keyof TableSettings, unknown>> | null | undefined): TableSettings {
   const raw = input ?? {};
-  const startingSmallBlind = clampInt(raw.startingSmallBlind, 1, 1_000_000, DEFAULT_SETTINGS.startingSmallBlind);
+  // Capped so that 10 big blinds (20 small blinds) always fit under the 10M chip cap.
+  const startingSmallBlind = clampInt(raw.startingSmallBlind, 1, 500_000, DEFAULT_SETTINGS.startingSmallBlind);
   // At least 10 big blinds to start with.
   const minChips = startingSmallBlind * 2 * 10;
   const startingChips = clampInt(raw.startingChips, Math.max(20, minChips), 10_000_000, Math.max(minChips, DEFAULT_SETTINGS.startingChips));

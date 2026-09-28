@@ -309,3 +309,29 @@ describe("energy, deck and refills", () => {
   });
 });
 
+
+describe("review regressions", () => {
+  it("a Scanner discard doesn't reveal which card went, even after an Engineer", () => {
+    const { game, clock, ids } = setup();
+    const [a, b] = ids;
+    givePowers(game, a, ["engineer", "scanner"]);
+    game.playPower(a, powerId(game, a, "engineer"), {}, clock.now);
+    game.choose(a, 0, clock.now);
+    expect(buildView(game, b, clock.now, NONE).hand!.knownTop).toBe("Qh");
+    game.playPower(a, powerId(game, a, "scanner"), {}, clock.now);
+    game.choose(a, 1, clock.now); // discards the card under the known one
+    // Qh is still on top, but opponents must not be able to tell which card was discarded.
+    expect(game.s.hand!.deck[0]).toBe("Qh");
+    expect(buildView(game, b, clock.now, NONE).hand!.knownTop).toBeNull();
+  });
+
+  it("Intel stops showing the top card once its player folds", () => {
+    const { game, clock, ids } = setup();
+    const [a] = ids;
+    givePowers(game, a, ["intel"]);
+    game.playPower(a, powerId(game, a, "intel"), {}, clock.now);
+    expect(buildView(game, a, clock.now, NONE).me!.intelTop).toBe("Qh");
+    game.act(a, "fold", undefined, clock.now);
+    expect(buildView(game, a, clock.now, NONE).me!.intelTop).toBeNull();
+  });
+});

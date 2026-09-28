@@ -77,8 +77,11 @@ export interface HandPlayer {
   totalBet: number;
   /** Has taken a voluntary action this street. */
   acted: boolean;
-  /** Value of `fullRaiseSeq` when they last acted; a later full raise lets them raise again. */
-  actedSeq: number;
+  /**
+   * The bet level they last acted at. If the raises since then add up to a full raise (even as several
+   * short all-ins), they may raise again (TDA rule 47); otherwise they can only call or fold.
+   */
+  actedAt: number;
   lastAction: string | null;
   intel: boolean;
   showCards: boolean;
@@ -128,7 +131,6 @@ export interface Hand {
   currentBet: number;
   /** Size of the last full bet/raise; the minimum raise increment. */
   minRaise: number;
-  fullRaiseSeq: number;
   toAct: string | null;
   turnDeadline: number | null;
   empStreet: Street | null;

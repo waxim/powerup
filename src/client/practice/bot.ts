@@ -189,42 +189,89 @@ export interface BotMemory {
   hand: number;
   street: string;
   powersThisStreet: number;
+  powersThisHand: number;
   /** It made the last preflop raise, so it's the one expected to bet the flop. */
   aggressor: boolean;
   /** The next cards off the deck, as far as this bot knows (its own Scanner). */
   prefix: Card[];
   deckCount: number;
+  boardLength: number;
   lastSeq: number;
   /** Cards it knows are out of play (its own discards). */
   dead: Card[];
+  /** Its stack when the hand began, to know when it's committed. */
+  startStack: number;
+  /** The bet it meant to make after an EMP, so an EMP is never followed by a fold. */
+  plan: { street: string; move: BotMove } | null;
   /** Power types seen at the table this session; unseen ones are a little more tempting (it's a demo). */
   seen: Set<PowerType>;
 }
 
 export function newBotMemory(): BotMemory {
-  return { hand: -1, street: "", powersThisStreet: 0, aggressor: false, prefix: [], deckCount: 0, lastSeq: -1, dead: [], seen: new Set() };
+  return {
+    hand: -1,
+    street: "",
+    powersThisStreet: 0,
+    powersThisHand: 0,
+    aggressor: false,
+    prefix: [],
+    deckCount: 0,
+    boardLength: 0,
+    lastSeq: -1,
+    dead: [],
+    startStack: 0,
+    plan: null,
+    seen: new Set(),
+  };
 }
 
+/** Catch up on what happened since this bot last looked. */
 function observe(mem: BotMemory, view: TableView): void {
   const h = view.hand;
   const fresh = view.log.filter((l) => l.seq > mem.lastSeq);
   for (const l of fresh) if (l.power) mem.seen.add(l.power);
+  // Missed some of the log: don't trust what we thought we knew about the deck.
+  const gap = view.log.length > 0 && mem.lastSeq >= 0 && view.log[0].seq > mem.lastSeq + 1;
   if (view.log.length) mem.lastSeq = view.log[view.log.length - 1].seq;
   if (!h) return;
   if (mem.hand !== h.number) {
-    Object.assign(mem, { hand: h.number, street: h.street, powersThisStreet: 0, aggressor: false, prefix: [], dead: [], deckCount: h.deckCount });
+    const self = view.players.find((x) => x.isYou);
+    Object.assign(mem, {
+      hand: h.number,
+      street: h.street,
+      powersThisStreet: 0,
+      powersThisHand: 0,
+      aggressor: false,
+      prefix: [],
+      dead: [],
+      plan: null,
+      deckCount: h.deckCount,
+      boardLength: h.board.length,
+      startStack: (self?.chips ?? 0) + (self?.streetBet ?? 0),
+    });
     return;
   }
   if (mem.street !== h.street) {
     mem.street = h.street;
     mem.powersThisStreet = 0;
+    mem.plan = null;
   }
   // Someone else reshuffled the top of the deck: what we knew about it no longer holds.
-  if (fresh.some((l) => l.playerId !== view.youId && (l.power === "engineer" || /discards one of the top/.test(l.text)))) mem.prefix = [];
-  // Everything else takes cards off the top in order.
+  if (gap || fresh.some((l) => l.playerId !== view.youId && (l.power === "engineer" || /discards one of the top/.test(l.text)))) {
+    mem.prefix = [];
+  }
+  // Everything else takes cards off the top in order: check the new board cards are the ones we expected.
   const drawn = mem.deckCount - h.deckCount;
-  if (drawn > 0) mem.prefix = mem.prefix.slice(drawn);
+  if (drawn > 0 && mem.prefix.length) {
+    const used = mem.prefix.slice(0, drawn);
+    const dealt = h.board.slice(mem.boardLength).map((b) => b.card);
+    mem.prefix = dealt.every((c) => used.includes(c)) || used.length < dealt.length ? mem.prefix.slice(drawn) : [];
+  }
   mem.deckCount = h.deckCount;
+  mem.boardLength = h.board.length;
+  // Intel and a public Engineer card are always right about the top card.
+  const top = view.me?.intelTop ?? h.knownTop;
+  if (top && mem.prefix[0] !== top) mem.prefix = [top];
 }
 
 /* ------------------------------------------------------------------ */
@@ -236,7 +283,12 @@ interface Spot {
   legal: LegalActions;
   p: Personality;
   mem: BotMemory;
+  /** Randomness for simulations. */
   rng: Rng;
+  /** Randomness for choices (fixed at the midpoint for the coach, which always gives the same advice). */
+  dice: Rng;
+  /** The first hands of a session: bots play gently while the newcomer finds their feet. */
+  warmup: boolean;
   hole: Card[];
   board: Card[];
   /** Live opponents' cards: exposed ones known, null for face down. */
@@ -254,44 +306,118 @@ interface Spot {
   /** Chips this bot could still win or lose against the biggest live stack. */
   eff: number;
   streetsLeft: number;
+  /** How believable a hand is for each live opponent, given how they've bet. */
+  accept: (i: number, hole: Card[]) => number;
 }
 
 const STREETS_LEFT: Record<string, number> = { preflop: 3, flop: 2, turn: 1, river: 0 };
 
-function spotFor(view: TableView, p: Personality, mem: BotMemory, rng: Rng): Spot | null {
+function spotFor(view: TableView, p: Personality, mem: BotMemory, rng: Rng, dice: Rng): Spot | null {
   const h = view.hand;
   const me = view.me;
   if (!h || !me?.legal) return null;
   const live = view.players.filter((x) => !x.isYou && x.inHand && !x.folded);
   const self = view.players.find((x) => x.isYou)!;
   const standard = h.board.filter((b) => !b.deployed).length;
-  const known = me.intelTop
-    ? [me.intelTop, ...(mem.prefix[0] === me.intelTop ? mem.prefix.slice(1) : [])]
-    : mem.prefix.length
-      ? mem.prefix
-      : h.knownTop
-        ? [h.knownTop]
-        : [];
   const biggest = Math.max(0, ...live.map((x) => x.chips + x.streetBet));
+  const board = h.board.map((b) => b.card);
   return {
     view,
     legal: me.legal,
     p,
     mem,
     rng,
+    dice,
+    warmup: view.handNumber <= WARMUP_HANDS,
     hole: me.hole.map((c) => c.card),
-    board: h.board.map((b) => b.card),
+    board,
     opponents: live.map((x) => x.hole.map((c) => c.card)),
     n: live.length,
     street: h.street,
     toCome: Math.max(0, 5 - standard),
-    known,
+    known: mem.prefix,
     bb: view.level.bb,
     pot: me.legal.pot,
     toCall: me.legal.callAmount,
     chips: self.chips,
     eff: Math.min(self.chips + self.streetBet, biggest),
     streetsLeft: STREETS_LEFT[h.street] ?? 0,
+    accept: rangeReader(view, live.map((x) => x.id), board),
+  };
+}
+
+const WARMUP_HANDS = 2;
+
+/* ------------------------------------------------------------------ */
+/* Reading opponents                                                   */
+/* ------------------------------------------------------------------ */
+
+type PreflopAction = "raise" | "call-raise" | "limp" | "check";
+
+/** How each player has acted this hand, from the public log (actions since this hand was dealt). */
+function readActions(view: TableView): { preflop: Map<string, PreflopAction>; bettors: Set<string> } {
+  const preflop = new Map<string, PreflopAction>();
+  const bettors = new Set<string>();
+  const log = view.log;
+  let start = -1;
+  for (let i = log.length - 1; i >= 0; i--) {
+    if (log[i].kind === "deal" && log[i].text.startsWith(`Hand #${view.handNumber}:`)) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return { preflop, bettors };
+  let street = "preflop";
+  let raised = false;
+  for (let i = start + 1; i < log.length; i++) {
+    const l = log[i];
+    if (l.kind === "deal") {
+      street = l.text.split(":")[0].toLowerCase();
+      bettors.clear();
+      continue;
+    }
+    if (l.kind !== "action" || !l.playerId) continue;
+    const raise = / (raises to|bets) /.test(l.text);
+    if (street === "preflop") {
+      if (raise) {
+        preflop.set(l.playerId, "raise");
+        raised = true;
+      } else if (/ calls /.test(l.text)) preflop.set(l.playerId, raised ? "call-raise" : "limp");
+      else if (/ checks$/.test(l.text)) preflop.set(l.playerId, "check");
+    } else if (raise) bettors.add(l.playerId);
+  }
+  return { preflop, bettors };
+}
+
+const category = (cards: Card[]) => Math.floor(handScore(cards) / 15 ** 5);
+
+/** A weight for how well a hand fits what an opponent has done: raisers raise good hands, bettors have something. */
+function rangeReader(view: TableView, ids: string[], board: Card[]): (i: number, hole: Card[]) => number {
+  const { preflop, bettors } = readActions(view);
+  const n = Math.max(1, view.players.filter((x) => x.inHand).length - 1);
+  const boardCategory = board.length >= 3 ? category(board) : 0;
+  return (i, hole) => {
+    let w = 1;
+    const pct = preflopPercentile(hole[0], hole[1], n);
+    switch (preflop.get(ids[i])) {
+      case "raise":
+        w *= pct <= 0.3 ? 1 : 0.25;
+        break;
+      case "call-raise":
+        w *= pct <= 0.45 ? 1 : 0.4;
+        break;
+      case "limp":
+      case "check":
+        w *= pct > 0.85 ? 0.5 : 1;
+        break;
+    }
+    if (board.length >= 3 && bettors.has(ids[i])) {
+      const made = category([...hole, ...board]) > boardCategory;
+      const suits = [...hole, ...board].map((c) => c[1]);
+      const flushDraw = hole.some((c) => suits.filter((x) => x === c[1]).length >= 4);
+      w *= made || flushDraw ? 1 : 0.35;
+    }
+    return w;
   };
 }
 
@@ -326,7 +452,9 @@ function raiseTo(s: Spot, to: number): BotMove {
 function potBet(s: Spot, fraction: number): BotMove {
   const { legal } = s;
   const afterCall = legal.pot + legal.callAmount;
-  return raiseTo(s, legal.streetBet + legal.callAmount + afterCall * fraction * s.p.sizing * (0.9 + 0.2 * uniform(s.rng)));
+  // Warm-up hands keep the bets small.
+  const f = Math.min(s.warmup ? 0.5 : Infinity, fraction * s.p.sizing * (0.9 + 0.2 * uniform(s.dice)));
+  return raiseTo(s, legal.streetBet + legal.callAmount + afterCall * f);
 }
 
 type Intent = "fold" | "check" | "call" | "bet";
@@ -352,7 +480,7 @@ function position(view: TableView): Position {
 const OPEN_INDEX: Record<Position, number> = { ep: 0, mp: 1, lp: 2, sb: 3, hu: 4, bb: 2 };
 
 function preflop(s: Spot): BotMove {
-  const { view, legal, p, rng, bb } = s;
+  const { view, legal, p, dice, bb } = s;
   const [a, b] = s.hole;
   const pct = preflopPercentile(a, b, s.n);
   const eq = preflopEquity(a, b, s.n);
@@ -367,30 +495,31 @@ function preflop(s: Spot): BotMove {
     if (highest > bb) return eq >= odds + 0.08 || pct <= 0.08 ? (pct <= 0.05 ? raiseTo(s, legal.maxRaiseTo) : call()) : foldOrCheck(s);
     const folded = view.players.filter((x) => !x.isYou && x.inHand && x.folded).length;
     const base = pos === "hu" ? (effBB <= 5 ? 0.8 : effBB <= 8 ? 0.6 : 0.45) : effBB <= 5 ? 0.55 : effBB <= 8 ? 0.35 : 0.22;
-    if (below(rng, pct, base * 1.15 ** folded)) return raiseTo(s, legal.maxRaiseTo);
+    if (below(dice, pct, base * 1.15 ** folded)) return raiseTo(s, legal.maxRaiseTo);
     return foldOrCheck(s);
   }
 
   if (highest <= bb) {
     const limpers = view.players.filter((x) => !x.isYou && x.inHand && !x.folded && x.streetBet === bb && !x.isBigBlind).length;
     const openTo = (pos === "hu" ? 2.2 : 2.5 + limpers) * bb * p.sizing;
-    if (legal.canCheck) return below(rng, pct, p.open[OPEN_INDEX[pos]] * 0.5) ? raiseTo(s, openTo + bb) : check();
-    if (below(rng, pct, p.open[OPEN_INDEX[pos]])) return raiseTo(s, openTo);
-    if (below(rng, pct, p.open[OPEN_INDEX[pos]] + p.limp)) return call();
-    if (pos === "sb" && below(rng, pct, 0.4 + p.limp)) return call();
+    if (legal.canCheck) return below(dice, pct, p.open[OPEN_INDEX[pos]] * 0.5) ? raiseTo(s, openTo + bb) : check();
+    if (below(dice, pct, p.open[OPEN_INDEX[pos]])) return raiseTo(s, openTo);
+    if (below(dice, pct, p.open[OPEN_INDEX[pos]] + p.limp)) return call();
+    if (pos === "sb" && below(dice, pct, 0.4 + p.limp)) return call();
     return foldOrCheck(s);
   }
 
   const raiseSize = highest / bb;
   if (raisers <= 1 && !s.mem.aggressor) {
     const adj = clamp(3 / raiseSize, 0.4, 1.3);
-    if (below(rng, pct, p.threeBet * adj)) return threeBet(s, highest, pos);
+    // No re-raising while the newcomer finds their feet.
+    if (below(dice, pct, p.threeBet * adj)) return s.warmup ? call() : threeBet(s, highest, pos);
     const range = p.callRaise * adj + (pos === "bb" ? p.bbDefend * adj : 0);
-    if (below(rng, pct, range) || (s.toCall <= bb && eq >= odds)) return call();
+    if (below(dice, pct, range) || (s.toCall <= bb && eq >= odds)) return call();
     return foldOrCheck(s);
   }
   // Facing a re-raise.
-  if (pct <= 0.035) return threeBet(s, highest, pos);
+  if (pct <= 0.035) return s.warmup ? call() : threeBet(s, highest, pos);
   if (pct <= (effBB > 40 ? 0.1 : 0.06) || eq >= odds + 0.1) return call();
   return foldOrCheck(s);
 }
@@ -406,30 +535,33 @@ function threeBet(s: Spot, highest: number, pos: Position): BotMove {
 /* ------------------------------------------------------------------ */
 
 function postflop(s: Spot, e: number, drawing: boolean): BotMove {
-  const { legal, p, rng, n, mem } = s;
+  const { legal, p, dice, n, mem } = s;
   const river = s.street === "river";
-  e = clamp(e + noise(rng) * p.wobble, 0, 1);
-  const pick = (lo: number, hi: number) => lo + (hi - lo) * uniform(rng);
+  e = clamp(e + noise(dice) * p.wobble, 0, 1);
+  const pick = (lo: number, hi: number) => lo + (hi - lo) * uniform(dice);
 
   if (legal.canCheck) {
     if (e >= 0.58 + 0.07 * (n - 1) - p.valueThin) {
-      if (e >= 0.9 && !river && chance(rng, p.slowplay)) return check();
+      if (e >= 0.9 && !river && chance(dice, p.slowplay)) return check();
       return potBet(s, river ? pick(0.65, 1) : pick(0.5, 0.75));
     }
-    if (mem.aggressor && s.street === "flop" && chance(rng, p.cbet * (n > 1 ? 0.5 : 1))) return potBet(s, pick(0.33, 0.5));
-    if (mem.aggressor && s.street === "turn" && e >= 0.35 && chance(rng, p.barrel)) return potBet(s, pick(0.6, 0.75));
-    if (drawing && !river && chance(rng, p.semiBluff * 0.5)) return potBet(s, pick(0.5, 0.66));
-    if (river && e < 0.25 && n === 1 && chance(rng, p.bluff)) return potBet(s, pick(0.65, 1));
+    if (mem.aggressor && s.street === "flop" && chance(dice, p.cbet * (n > 1 ? 0.5 : 1))) return potBet(s, pick(0.33, 0.5));
+    if (mem.aggressor && s.street === "turn" && e >= 0.35 && chance(dice, p.barrel)) return potBet(s, pick(0.6, 0.75));
+    if (drawing && !river && chance(dice, p.semiBluff * 0.5)) return potBet(s, pick(0.5, 0.66));
+    if (river && e < 0.25 && n === 1 && chance(dice, p.bluff)) return potBet(s, pick(0.65, 1));
     return check();
   }
 
   const need = s.toCall / (s.pot + s.toCall);
   const allInCall = s.toCall >= s.chips;
-  if (!allInCall && e >= 0.72 + 0.05 * (n - 1) && chance(rng, p.aggression)) return potBet(s, pick(0.7, 0.9));
+  if (!allInCall && e >= 0.72 + 0.05 * (n - 1) && chance(dice, p.aggression)) return s.warmup ? call() : potBet(s, pick(0.7, 0.9));
   const implied = drawing && !river && s.eff > 3 * s.pot ? (s.street === "flop" ? 0.07 : 0.04) : 0;
-  if (e >= need - implied - p.sticky) return call();
+  // Warm-up bots call a little lighter, so the newcomer sees more flops and showdowns.
+  if (e >= need - implied - p.sticky - (s.warmup ? 0.05 : 0)) return call();
   if (s.toCall <= 0.2 * s.pot && e >= 0.15) return call();
-  if (drawing && !river && n === 1 && !allInCall && chance(rng, p.semiBluff * 0.3)) return potBet(s, pick(0.7, 0.9));
+  // Too much in the pot to give up now.
+  if (s.mem.startStack - s.chips >= 0.4 * s.mem.startStack && e >= 0.25) return call();
+  if (drawing && !river && n === 1 && !allInCall && chance(dice, p.semiBluff * 0.3)) return potBet(s, pick(0.7, 0.9));
   return foldOrCheck(s);
 }
 
@@ -501,7 +633,7 @@ function powerIdeas(s: Spot, e: number, intent: Intent, base: number[] | null, w
   const has = (t: PowerType) => playable.some((x) => x.type === t);
   const hasUpgrade = has("upgrade");
   const add = (power: MyPowerView, chipsGained: number, move: BotMove, order: number) => {
-    const novel = s.mem.seen.has(power.type) ? 1 : 0.5;
+    const novel = s.mem.seen.has(power.type) ? 1 : s.warmup ? 0.35 : 0.5;
     const value = chipsGained * (s.p.affinity[power.type] ?? 1) - power.cost * price * novel;
     if (value > 0) ideas.push({ power, value, move, order });
   };
@@ -615,6 +747,7 @@ function powerIdeas(s: Spot, e: number, intent: Intent, base: number[] | null, w
         break;
       }
       case "emp": {
+        if (s.warmup || h.empBy) break;
         if (intent !== "bet" && !(intent === "call" && s.toCall >= 0.3 * s.pot)) break;
         if (e < 0.55 || (s.street === "preflop" && s.pot < 8 * s.bb)) break;
         const threats = s.view.players.filter((x) => !x.isYou && x.inHand && !x.folded && !x.allIn && x.energy >= 2 && x.powerCount > 0);
@@ -656,14 +789,15 @@ function meanUpgrade(hole: Card[], n: number): number {
 /* ------------------------------------------------------------------ */
 
 function worldsFor(
-  s: { hole: Card[]; board: Card[]; opponents: (Card | null)[][]; rng: Rng },
+  s: { hole: Card[]; board: Card[]; opponents: (Card | null)[][]; rng: Rng; accept?: (i: number, hole: Card[]) => number },
   prefix: Card[],
   dead: Card[],
   streamLength: number,
   outcomes: number,
+  budget = EVAL_BUDGET,
 ): World[] {
-  const count = clamp(Math.round(EVAL_BUDGET / ((1 + s.opponents.length) * outcomes)), 60, 300);
-  return sampleWorlds({ seen: [...s.hole, ...s.board], opponents: s.opponents, prefix, dead, streamLength, count, rng: s.rng });
+  const count = clamp(Math.round(budget / ((1 + s.opponents.length) * outcomes)), 60, 300);
+  return sampleWorlds({ seen: [...s.hole, ...s.board], opponents: s.opponents, prefix, dead, streamLength, count, rng: s.rng, accept: s.accept });
 }
 
 function followUp(view: TableView, mem: BotMemory, rng: Rng): BotMove | null {
@@ -674,7 +808,7 @@ function followUp(view: TableView, mem: BotMemory, rng: Rng): BotMove | null {
   const board = h.board.map((b) => b.card);
   const opponents = live.map((x) => x.hole.map((c) => c.card));
   const toCome = Math.max(0, 5 - h.board.filter((b) => !b.deployed).length);
-  const ctx = { hole, board, opponents, rng };
+  const ctx = { hole, board, opponents, rng, accept: rangeReader(view, live.map((x) => x.id), board) };
   const best = (outcomes: Outcome[], worlds: World[]) => {
     const results = outcomes.map((o) => shares(worlds, o));
     let index = 0;
@@ -729,6 +863,84 @@ function followUp(view: TableView, mem: BotMemory, rng: Rng): BotMove | null {
 /* The policy                                                          */
 /* ------------------------------------------------------------------ */
 
+/** A decision and the numbers behind it (the Hint shows them). */
+export interface Thought {
+  move: BotMove;
+  /** The power it would play first, if any (then `move` is that power). */
+  power: PowerType | null;
+  /** Its share of the pot, and the share it needs to call. */
+  equity: number;
+  need: number;
+  /** Preflop: how good the starting hand is (0 = best). */
+  percentile: number | null;
+}
+
+interface ThinkOptions {
+  /** Budget of hand evaluations per decision. */
+  budget?: number;
+  /** Always consider powers (the coach), rather than only when in the mood. */
+  eager?: boolean;
+}
+
+function think(view: TableView, p: Personality, mem: BotMemory, rng: Rng, dice: Rng, opts: ThinkOptions = {}): Thought | null {
+  const me = view.me!;
+  const s = spotFor(view, p, mem, rng, dice);
+  if (!s) return null;
+
+  // An EMP is only ever played to protect a bet: make that bet now.
+  if (mem.plan && mem.plan.street === s.street) {
+    const planned = mem.plan.move;
+    mem.plan = null;
+    if (planned.t === "act" && (planned.action === "call" ? s.toCall > 0 : s.legal.canRaise)) {
+      const move = planned.action === "raise" ? raiseTo(s, planned.amount ?? s.legal.minRaiseTo) : planned;
+      return { move, power: null, equity: 0.5, need: 0, percentile: null };
+    }
+  }
+
+  let e: number;
+  let drawing = false;
+  let worlds: World[] | null = null;
+  let base: number[] | null = null;
+  const maxPowers = s.warmup ? 1 : p.maxPowers;
+  const canPower =
+    mem.powersThisStreet < maxPowers &&
+    mem.powersThisHand < (s.warmup ? 1 : 3) &&
+    me.powers.some((x) => x.playable && x.cost <= me.energy);
+  const wasteSoon = me.energy + view.rules.energyPerHand > view.rules.maxEnergy;
+  const considerPowers = canPower && (opts.eager || wasteSoon || chance(dice, p.appetite));
+  const need = s.toCall / (s.pot + s.toCall);
+
+  if (s.street === "preflop") {
+    e = preflopEquity(s.hole[0], s.hole[1], s.n);
+  } else {
+    worlds = worldsFor(s, s.known, mem.dead, s.toCome + 3, 2 + (considerPowers ? 6 : 0), opts.budget);
+    base = shares(worlds, (w) => ({ hole: s.hole, board: [...s.board, ...w.stream.slice(0, s.toCome)] }));
+    e = mean(base);
+    // A hand that needs the cards to come.
+    if (s.toCome > 0 && e < 0.55) drawing = e - mean(shares(worlds, () => ({ hole: s.hole, board: s.board }))) > 0.08;
+  }
+  const percentile = s.street === "preflop" ? preflopPercentile(s.hole[0], s.hole[1], s.n) : null;
+
+  const bet = s.street === "preflop" ? preflop(s) : postflop(s, e, drawing);
+  if (considerPowers) {
+    const ideas = powerIdeas(s, e, intentOf(bet), base, worlds);
+    if (ideas.length) {
+      // Information first, then Clone, then the powers that change cards, and EMP just before the bet.
+      ideas.sort((x, y) => x.order - y.order || y.value - x.value);
+      const idea = ideas[0];
+      mem.powersThisStreet++;
+      mem.powersThisHand++;
+      if (idea.power.type === "emp") mem.plan = { street: s.street, move: bet };
+      return { move: idea.move, power: idea.power.type, equity: e, need, percentile };
+    }
+  }
+  if (s.street === "preflop" && bet.t === "act") {
+    if (bet.action === "raise") mem.aggressor = true;
+    else if (bet.action === "call") mem.aggressor = false;
+  }
+  return { move: bet, power: null, equity: e, need, percentile };
+}
+
 /**
  * The practice bot. It sees exactly what a human in its seat would (its own TableView) plus its own notes.
  * Order of business: rebuy, finish a power's follow-up choice, maybe play a power, then bet.
@@ -740,41 +952,51 @@ export const practiceBot: BotPolicy = (view, rng, profile, memory) => {
   const mem = memory ?? newBotMemory();
   observe(mem, view);
   if (me.scanner || me.upgrade || me.engineer) return followUp(view, mem, rng);
-  const p = PERSONALITIES[profile % PERSONALITIES.length];
-  const s = spotFor(view, p, mem, rng);
-  if (!s) return null;
-
-  let e: number;
-  let drawing = false;
-  let worlds: World[] | null = null;
-  let base: number[] | null = null;
-  const canPower = mem.powersThisStreet < p.maxPowers && me.powers.some((x) => x.playable && x.cost <= me.energy);
-  const wasteSoon = me.energy + view.rules.energyPerHand > view.rules.maxEnergy;
-  const considerPowers = canPower && (wasteSoon || chance(rng, p.appetite));
-
-  if (s.street === "preflop") {
-    e = preflopEquity(s.hole[0], s.hole[1], s.n);
-  } else {
-    worlds = worldsFor(s, s.known, mem.dead, s.toCome + 3, 2 + (considerPowers ? 6 : 0));
-    base = shares(worlds, (w) => ({ hole: s.hole, board: [...s.board, ...w.stream.slice(0, s.toCome)] }));
-    e = mean(base);
-    // A hand that needs the cards to come.
-    if (s.toCome > 0 && e < 0.55) drawing = e - mean(shares(worlds, () => ({ hole: s.hole, board: s.board }))) > 0.08;
-  }
-
-  const bet = s.street === "preflop" ? preflop(s) : postflop(s, e, drawing);
-  if (considerPowers) {
-    const ideas = powerIdeas(s, e, intentOf(bet), base, worlds);
-    if (ideas.length) {
-      // Information first, then Clone, then the powers that change cards, and EMP just before the bet.
-      ideas.sort((x, y) => x.order - y.order || y.value - x.value);
-      mem.powersThisStreet++;
-      return ideas[0].move;
-    }
-  }
-  if (s.street === "preflop" && bet.t === "act") {
-    if (bet.action === "raise") mem.aggressor = true;
-    else if (bet.action === "call") mem.aggressor = false;
-  }
-  return bet;
+  return think(view, PERSONALITIES[profile % PERSONALITIES.length], mem, rng, rng)?.move ?? null;
 };
+
+/** A steady, honest player: no bluffs, no moods, the same advice every time. */
+const COACH: Personality = {
+  ...PERSONALITIES[3],
+  name: "Coach",
+  limp: 0,
+  aggression: 1,
+  bluff: 0,
+  semiBluff: 0,
+  valueThin: 0,
+  sticky: 0,
+  slowplay: 0,
+  sizing: 1,
+  wobble: 0,
+  appetite: 1,
+  thrift: 1,
+  maxPowers: 3,
+  affinity: {},
+};
+
+/** Always lands in the middle, so every "maybe" in the policy resolves the same way. */
+const MIDPOINT: Rng = { int: (max) => Math.floor(max / 2) };
+
+/**
+ * What the coach would do in the player's seat, from the player's own view only. `memory` should be kept
+ * for the player across calls, so it knows what their own Scanner showed them.
+ */
+export function advise(view: TableView, memory: BotMemory, rng: Rng): Thought | null {
+  if (!view.me?.legal) return null;
+  // The coach's notes are a copy: asking for a hint mustn't change the bots' idea of what happened.
+  const mem = { ...memory, prefix: [...memory.prefix], dead: [...memory.dead], seen: new Set(memory.seen) };
+  observe(mem, view);
+  return think(view, COACH, mem, rng, MIDPOINT, { budget: 6000, eager: true });
+}
+
+/** Keep the player's own notes up to date (what their Scanner showed), for the Hint. */
+export function notePlayerChoice(memory: BotMemory, view: TableView, index: number | null): void {
+  const me = view.me;
+  const h = view.hand;
+  if (!me?.scanner || !h) return;
+  observe(memory, view);
+  const [a, b] = me.scanner;
+  memory.prefix = index === null ? [a, b] : [index === 0 ? b : a];
+  if (index !== null) memory.dead.push(index === 0 ? a : b);
+  memory.deckCount = h.deckCount - (index === null ? 0 : 1);
+}

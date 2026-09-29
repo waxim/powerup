@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  BookOpenCheck,
   Check,
   Lightbulb,
   Link,
@@ -15,6 +16,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { PowerType } from "../../shared/powers";
 import type { ClientMessage, TableView } from "../../shared/protocol";
 import { chips, clock } from "../lib/format";
 import { getSeatToken } from "../lib/storage";
@@ -25,6 +27,9 @@ export interface PracticeControls {
   progress: string;
   tips: boolean;
   onToggleTips(): void;
+  onCheatSheet(): void;
+  /** Called when the player picks up a power they can play. */
+  onPowerSelect?(type: PowerType): void;
   onRestart(): void;
   onExit(): void;
 }
@@ -80,7 +85,7 @@ export function TopBar({ view, send, serverNow, fourColor, setFourColor, sound, 
       ) : (
         <Logo small />
       )}
-      <div className="level" title="Blind level">
+      <div className="level" title="Blind level" data-coach="blinds">
         <span className="level-blinds">
           {chips(view.level.sb)}/{chips(view.level.bb)}
         </span>
@@ -91,6 +96,11 @@ export function TopBar({ view, send, serverNow, fourColor, setFourColor, sound, 
         )}
       </div>
       <div className="topbar-actions" ref={menuRef}>
+        {practice && (
+          <button type="button" className="btn btn-ghost icon-only" onClick={practice.onCheatSheet} aria-label="Cheat sheet" title="Cheat sheet">
+            <BookOpenCheck size={20} />
+          </button>
+        )}
         <button type="button" className="btn btn-ghost icon-only log-toggle" onClick={onToggleLog} aria-label="Table log">
           <ScrollText size={20} />
         </button>

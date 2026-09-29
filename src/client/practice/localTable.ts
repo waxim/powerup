@@ -1,11 +1,13 @@
 import { applyPlayerMessage, isPlayerMessage } from "../../engine/dispatch";
+import { handScore } from "../../engine/evaluator";
 import { Game, GameError } from "../../engine/game";
 import { seededRng, type Rng } from "../../engine/rng";
 import { buildView } from "../../engine/view";
-import type { PowerType } from "../../shared/powers";
+import { modeForPlayers, type PowerType } from "../../shared/powers";
 import type { ClientMessage, TableView } from "../../shared/protocol";
 import { UNLIMITED_REBUYS, cleanName } from "../../shared/settings";
-import { newBotMemory, pickOpponents, type BotMemory } from "./bot";
+import { advise, newBotMemory, notePlayerChoice, pickOpponents, type BotMemory, type Thought } from "./bot";
+import { Curriculum } from "./curriculum";
 
 /** What a bot wants to do next. Mirrors the client messages a human would send. */
 export type BotMove =
@@ -35,19 +37,22 @@ export interface PracticeConfig {
 }
 
 export const PRACTICE_DEFAULTS = {
-  startingChips: 1000,
+  startingChips: 1500,
   startingSmallBlind: 10,
-  levelMinutes: 3,
+  levelMinutes: 4,
   turnSeconds: 90,
 } as const;
 
-export type SessionEnd = "orbits" | "out" | "finished";
+export type SessionEnd = "orbits" | "out" | "finished" | "left";
 
 /** What the human did this session, for the summary. Recorded as hands finish (the log is truncated). */
 export interface PracticeStats {
   hands: number;
   handsWon: number;
-  biggestWin: number;
+  /** The biggest pot the human won: its size, their hand (if shown) and the powers they played in it. */
+  biggestPot: { amount: number; label: string | null; powers: PowerType[] } | null;
+  /** The best hand the human showed down. */
+  bestHand: { label: string; score: number } | null;
   powersPlayed: Partial<Record<PowerType, number>>;
   powersFaced: Partial<Record<PowerType, number>>;
 }
@@ -60,6 +65,10 @@ interface BotSeat {
 }
 
 type BotTask = { id: string; kind: "turn" | "choice" | "rebuy" };
+
+/** A bot starts deciding this soon after its turn begins, then "thinks" for a time that suits its decision. */
+const DECIDE_MS = 150;
+const MAX_THINK_MS = 3500;
 
 /**
  * A complete table running in the browser: the real game engine, the human's seat and the bot seats.
@@ -74,15 +83,19 @@ export class LocalTable {
   readonly game: Game;
   readonly humanId: string;
   readonly bots: readonly BotSeat[];
-  readonly stats: PracticeStats = { hands: 0, handsWon: 0, biggestWin: 0, powersPlayed: {}, powersFaced: {} };
+  readonly stats: PracticeStats = { hands: 0, handsWon: 0, biggestPot: null, bestHand: null, powersPlayed: {}, powersFaced: {} };
   handLimit: number;
   ended: SessionEnd | null = null;
   /** Bot moves the engine rejected (a bot bug); tests require this to stay 0. */
   fallbacks = 0;
 
   private readonly botRng: Rng;
+  private readonly hintRng: Rng;
   private readonly allIds: Set<string>;
-  private botDue: (BotTask & { at: number; seq: number }) | null = null;
+  /** The bot whose move is next: first it decides, then the move is applied after its thinking time. */
+  private botDue: (BotTask & { at: number; seq: number; move?: BotMove }) | null = null;
+  /** The human's own notes (what their Scanner showed them), so the Hint knows it too. */
+  private readonly humanMemory = newBotMemory();
   /** Bots whose last move was a power, so their next move waits until the announcement has been read. */
   private readonly afterPower = new Set<string>();
   private recordedHand = 0;
@@ -94,6 +107,7 @@ export class LocalTable {
   ) {
     const opponents = Math.min(5, Math.max(1, Math.round(config.opponents)));
     const name = cleanName(config.name) || "Player";
+    const curriculum = new Curriculum(modeForPlayers(opponents + 1));
     const { game, host } = Game.create({
       id: "practice",
       settings: {
@@ -108,12 +122,16 @@ export class LocalTable {
       hostName: name,
       now,
       rng: seededRng(config.seed),
+      hooks: curriculum,
     });
+    // Powers are first dealt when the game starts, so the curriculum knows who the player is in time.
+    curriculum.humanId = host.id;
     this.game = game;
     this.humanId = host.id;
     this.bots = pickOpponents(host.name, opponents).map((b) => ({ ...b, id: game.join(b.name, now).id, memory: newBotMemory() }));
     this.allIds = new Set(game.s.players.map((p) => p.id));
     this.botRng = seededRng(config.seed ^ 0x5bd1e995);
+    this.hintRng = seededRng(config.seed ^ 0x2545f491);
     this.handLimit = Math.max(1, config.orbits) * game.s.players.length;
     game.start(host.id, now);
     this.afterChange(now);
@@ -129,6 +147,7 @@ export class LocalTable {
     if (this.ended) throw new GameError("This practice session is over");
     if (!isPlayerMessage(msg) || msg.t === "start" || msg.t === "rematch") throw new GameError("Not available in practice");
     const before = structuredClone(this.game.s);
+    const scanner = msg.t === "choose" && this.game.s.hand?.pending?.kind === "scanner" ? this.view(now) : null;
     try {
       applyPlayerMessage(this.game, this.humanId, msg, now);
     } catch (err) {
@@ -136,7 +155,21 @@ export class LocalTable {
       this.game.s = before;
       throw err;
     }
+    if (scanner && msg.t === "choose") notePlayerChoice(this.humanMemory, scanner, msg.index);
     this.afterChange(now);
+  }
+
+  /** What the coach would do in the player's seat right now (only from what the player can see). */
+  advise(now: number): Thought | null {
+    if (this.ended) return null;
+    return advise(structuredClone(this.view(now)), this.humanMemory, this.hintRng);
+  }
+
+  /** The player walks away; the summary shows what they did so far. */
+  leave(): void {
+    if (this.ended) return;
+    this.ended = "left";
+    this.botDue = null;
   }
 
   /** Run everything due up to `now`, in time order. Returns true if anything happened. */
@@ -155,7 +188,7 @@ export class LocalTable {
         break;
       }
       // Bots go first on a tie, so a timer never beats a bot that was already due.
-      if (bot !== null && bot <= t) this.runBot(t);
+      if (bot !== null && bot <= t) this.stepBot(t);
       else this.game.tick(t);
       this.afterChange(t);
     }
@@ -198,10 +231,10 @@ export class LocalTable {
       this.botDue = null;
       return;
     }
-    // Keep the bot's thinking time running unless something happened since it started thinking.
+    // Keep the bot's decision and thinking time unless something happened since it started thinking.
     const due = this.botDue;
     if (due && due.id === task.id && due.kind === task.kind && due.seq === s.logSeq) return;
-    this.botDue = { ...task, at: now + this.thinkMs(task), seq: s.logSeq };
+    this.botDue = { ...task, at: now + DECIDE_MS, seq: s.logSeq };
   }
 
   private botTask(): BotTask | null {
@@ -222,35 +255,52 @@ export class LocalTable {
     return this.bots.some((b) => b.id === id);
   }
 
-  /** How long a bot "thinks": long enough to follow, quicker when the human is out of the hand. */
-  private thinkMs(task: BotTask): number {
-    const h = this.game.s.hand;
+  /** How long a bot "thinks" before a move: long enough to follow, longer for big decisions and powers. */
+  private thinkMs(task: BotTask, move: BotMove): number {
+    const s = this.game.s;
+    const h = s.hand;
     const between = (min: number, max: number) => min + this.botRng.int(max - min + 1);
     let ms: number;
-    if (task.kind === "rebuy") ms = between(600, 1100);
-    else if (task.kind === "choice") ms = h?.pending?.kind === "engineer" ? between(1800, 2400) : between(900, 1400);
-    else if (this.afterPower.has(task.id)) ms = between(1300, 1900);
+    if (task.kind === "rebuy") ms = between(500, 900);
+    // Engineer's options are public: give everyone time to look at them.
+    else if (task.kind === "choice") ms = h?.pending?.kind === "engineer" ? between(1900, 2500) : between(900, 1400);
+    else if (move.t === "power") ms = between(1100, 1800);
     else {
       const hp = h?.players.find((p) => p.id === task.id);
+      const chips = s.players.find((p) => p.id === task.id)?.chips ?? 0;
       const facing = h && hp ? h.currentBet - hp.streetBet : 0;
-      const stack = this.game.s.players.find((p) => p.id === task.id)?.chips ?? 0;
-      ms = facing > 0 && facing >= stack / 2 ? between(1500, 2400) : between(800, 1600);
+      const shove = move.t === "act" && move.action === "raise" && (move.amount ?? 0) - (hp?.streetBet ?? 0) >= chips * 0.8;
+      if (move.t === "act" && move.action === "fold" && h?.street === "preflop") ms = between(500, 900);
+      else if ((facing > 0 && facing >= chips / 2) || shove) ms = between(1600, 2800);
+      else ms = between(900, 1700);
     }
+    // After its own power, the announcement stays up long enough to read before the bot moves on.
+    if (this.afterPower.has(task.id)) ms = Math.max(ms, 1300);
     const you = h?.players.find((p) => p.id === this.humanId);
-    return !you || you.folded ? Math.round(ms * 0.6) : ms;
+    if (!you || you.folded) ms *= 0.55;
+    return Math.round(Math.min(MAX_THINK_MS, ms));
   }
 
-  private runBot(now: number): void {
+  /** The due bot either makes up its mind (then waits its thinking time) or makes the move it decided on. */
+  private stepBot(now: number): void {
     const due = this.botDue!;
-    this.botDue = null;
     const bot = this.bots.find((b) => b.id === due.id)!;
-    let move: BotMove | null = null;
-    try {
-      // A private copy: nothing the bot does to it can reach the real state.
-      move = this.policy(structuredClone(buildView(this.game, bot.id, now, this.allIds)), this.botRng, bot.profile, bot.memory);
-    } catch (err) {
-      console.warn("practice bot failed", err);
+    if (!due.move) {
+      let move: BotMove | null = null;
+      try {
+        // A private copy: nothing the bot does to it can reach the real state.
+        move = this.policy(structuredClone(buildView(this.game, bot.id, now, this.allIds)), this.botRng, bot.profile, bot.memory);
+      } catch (err) {
+        console.warn("practice bot failed", err);
+      }
+      if (move) {
+        due.move = move;
+        due.at = now + Math.max(0, this.thinkMs(due, move) - DECIDE_MS);
+        return;
+      }
     }
+    this.botDue = null;
+    const move = due.move ?? null;
     const before = structuredClone(this.game.s);
     try {
       if (!move) throw new GameError("The bot had no move");
@@ -292,9 +342,17 @@ export class LocalTable {
     if (!h.players.some((p) => p.id === this.humanId)) return;
     st.hands++;
     const won = h.result?.won[this.humanId] ?? 0;
+    const shown = h.result?.showdown ? h.result.hands[this.humanId] : undefined;
     if (won > 0) {
       st.handsWon++;
-      st.biggestWin = Math.max(st.biggestWin, won);
+      if (!st.biggestPot || won > st.biggestPot.amount) {
+        const powers = h.powerHistory.filter((x) => x.playerId === this.humanId).map((x) => x.type);
+        st.biggestPot = { amount: won, label: shown?.label ?? null, powers };
+      }
+    }
+    if (shown && shown.best.length === 5) {
+      const score = handScore(shown.best);
+      if (!st.bestHand || score > st.bestHand.score) st.bestHand = { label: shown.label, score };
     }
   }
 }

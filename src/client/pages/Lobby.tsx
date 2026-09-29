@@ -162,6 +162,9 @@ export function Lobby({ conn }: { conn: TableConnection }) {
         {you && !isHost && (
           <div className="waiting">
             <p>Waiting for {host?.name ?? "the host"} to start the game…</p>
+            <a className="link-button practice-wait" href="/try" target="_blank" rel="noopener">
+              New to PowerUp? Practice while you wait (opens a new tab)
+            </a>
             <button type="button" className="btn btn-ghost" onClick={leave}>
               <LogOut size={18} aria-hidden /> Leave
             </button>

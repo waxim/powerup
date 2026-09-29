@@ -65,6 +65,8 @@ export function GameTable({ conn, practice, floating }: Props) {
     select: (id) => {
       setSelectedId(id);
       setReloadPick([]);
+      const picked = me?.powers.find((p) => p.id === id && p.playable);
+      if (picked) practice?.onPowerSelect?.(picked.type);
     },
     reloadPick,
     toggleReload: (i) => setReloadPick((pick) => (pick.includes(i) ? pick.filter((x) => x !== i) : [...pick, i].slice(-2))),
@@ -167,7 +169,7 @@ export function GameTable({ conn, practice, floating }: Props) {
           <Zap size={16} aria-hidden /> Spectating · {v.players.filter((p) => p.status === "playing").length} players left
         </div>
       )}
-      <Overlays view={v} send={send} serverNow={now} />
+      <Overlays view={v} send={send} serverNow={now} practice={!!practice} />
     </div>
   );
 }

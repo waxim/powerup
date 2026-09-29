@@ -1,6 +1,7 @@
 import { GameError } from "../../engine/game";
 import type { ClientMessage, TableView } from "../../shared/protocol";
 import { VirtualClock, type HoldReason } from "./clock";
+import type { Thought } from "./bot";
 import { LocalTable, type BotPolicy, type PracticeConfig, type PracticeStats, type SessionEnd } from "./localTable";
 
 /** The browser APIs the runner needs, injected so tests can drive it with fake timers and a fake document. */
@@ -141,6 +142,39 @@ export class PracticeRunner {
   extend(): void {
     this.table.extend(1);
     this.clock.release("ended");
+    this.pump();
+  }
+
+  /** Stop here and show the summary. */
+  leave(): void {
+    this.table.leave();
+    this.afterWork();
+  }
+
+  /** What the coach would do in the player's seat right now. */
+  advise(): Thought | null {
+    return this.table.advise(this.clock.now());
+  }
+
+  /** Whether the wait before the next hand can be skipped right now. */
+  canSkipWait(): boolean {
+    const s = this.table.game.s;
+    return (
+      !this.clock.held &&
+      !this.table.ended &&
+      s.status === "running" &&
+      !s.paused &&
+      s.hand?.phase === "done" &&
+      s.nextHandAt !== null &&
+      s.handNumber < this.table.handLimit &&
+      !s.players.some((p) => p.status === "busted")
+    );
+  }
+
+  /** Deal the next hand now instead of waiting out the pause after a hand. */
+  skipWait(): void {
+    if (!this.canSkipWait()) return;
+    this.clock.skip(this.table.game.s.nextHandAt! - this.clock.now());
     this.pump();
   }
 

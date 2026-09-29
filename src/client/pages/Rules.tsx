@@ -1,6 +1,8 @@
 import { Bot, ChevronLeft, Shield } from "lucide-react";
 import { MAX_DEPLOYS_PER_HAND, MODE_RULES, POWERS, POWER_TYPES } from "../../shared/powers";
+import { HandRankings } from "../components/HandRankings";
 import { PowerIcon } from "../components/PowerCard";
+import { TryLink } from "../components/TryLink";
 import { linkHandler } from "../lib/router";
 import { Logo } from "./Home";
 
@@ -24,9 +26,9 @@ export function Rules() {
           rebuild your hand, rip cards off the board.
         </p>
         <p>
-          <a href="/try" onClick={linkHandler("/try")} className="btn btn-primary">
+          <TryLink className="btn btn-primary">
             <Bot size={18} aria-hidden /> Try a practice game against bots
-          </a>
+          </TryLink>
         </p>
         <h2>The table</h2>
         <ul>
@@ -76,6 +78,10 @@ export function Rules() {
             );
           })}
         </div>
+
+        <h2>Hand rankings</h2>
+        <p>Best to worst. You make the best five-card hand you can from your two cards and the board.</p>
+        <HandRankings />
 
         <h2>The Double game (4 to 6 players)</h2>
         <p>

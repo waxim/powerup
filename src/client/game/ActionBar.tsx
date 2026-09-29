@@ -23,7 +23,11 @@ export function ActionBar({ view, send, timeLeft }: Props) {
   }, [decisionKey]);
 
   if (!legal || !h) {
-    return <div className="actionbar actionbar-idle">{idleText(view)}</div>;
+    return (
+      <div className="actionbar actionbar-idle" data-coach="actions">
+        {idleText(view)}
+      </div>
+    );
   }
 
   const bb = h ? Math.max(1, view.level.bb) : 1;
@@ -42,7 +46,7 @@ export function ActionBar({ view, send, timeLeft }: Props) {
   const verb = legal.isBet ? "Bet" : "Raise to";
 
   return (
-    <div className="actionbar">
+    <div className="actionbar" data-coach="actions">
       {timeLeft !== null && (
         <div className="turn-clock" aria-hidden>
           <div className={timeLeft < 0.25 ? "turn-clock-fill is-urgent" : "turn-clock-fill"} style={{ width: `${timeLeft * 100}%` }} />

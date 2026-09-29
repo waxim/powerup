@@ -27,7 +27,14 @@ export interface WorldsInput {
   streamLength: number;
   count: number;
   rng: Rng;
+  /**
+   * How believable a hand is for opponent `i` given how they've played (0..1). Unlikely hands are redrawn,
+   * up to a few times, so a raiser tends to hold a raising hand.
+   */
+  accept?: (i: number, hole: Card[]) => number;
 }
+
+const MAX_TRIES = 4;
 
 export function sampleWorlds(input: WorldsInput): World[] {
   const known = new Set<Card>([...input.seen, ...input.prefix, ...input.dead]);
@@ -36,19 +43,30 @@ export function sampleWorlds(input: WorldsInput): World[] {
   const oppNeed = input.opponents.reduce((n, o) => n + o.filter((c) => c === null).length, 0);
   const streamRandom = Math.max(0, input.streamLength - input.prefix.length);
   const need = Math.min(pool.length, oppNeed + streamRandom);
+  const { rng, accept } = input;
+  // Partial Fisher-Yates: position i of the pool gets a random card from the positions not yet used.
+  const draw = (i: number): Card => {
+    const j = i + rng.int(pool.length - i);
+    const t = pool[i];
+    pool[i] = pool[j];
+    pool[j] = t;
+    return pool[i];
+  };
   const worlds: World[] = [];
   for (let w = 0; w < input.count; w++) {
-    // Partial Fisher-Yates: the first `need` cards of the pool are this world's unseen cards.
-    for (let i = 0; i < need; i++) {
-      const j = i + input.rng.int(pool.length - i);
-      const t = pool[i];
-      pool[i] = pool[j];
-      pool[j] = t;
-    }
     let k = 0;
-    const opp = input.opponents.map((o) => o.map((c) => c ?? pool[k++]));
+    const opp = input.opponents.map((known, i) => {
+      const start = k;
+      let hole: Card[] = [];
+      for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+        k = start;
+        hole = known.map((c) => c ?? draw(k++));
+        if (!accept || attempt === MAX_TRIES - 1 || rng.int(1000) < accept(i, hole) * 1000) break;
+      }
+      return hole;
+    });
     const stream = input.prefix.slice(0, input.streamLength);
-    while (stream.length < input.streamLength && k < need) stream.push(pool[k++]);
+    while (stream.length < input.streamLength && k < need) stream.push(draw(k++));
     worlds.push({ opp, stream });
   }
   return worlds;

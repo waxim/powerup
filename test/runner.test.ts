@@ -156,6 +156,36 @@ describe("practice runner", () => {
     expect(fresh.view.handNumber).toBe(0);
   });
 
+  it("can skip the wait before the next hand", () => {
+    const { env, runner } = make();
+    runner.attach();
+    for (let i = 0; i < 400 && runner.current.game.s.hand?.phase !== "done"; i++) {
+      const l = runner.getSnapshot().view.me?.legal;
+      if (l) runner.send({ t: "act", action: l.canCheck ? "check" : "fold" });
+      else env.advanceBy(250);
+    }
+    expect(runner.canSkipWait()).toBe(true);
+    const hand = runner.current.game.s.handNumber;
+    runner.skipWait();
+    expect(runner.current.game.s.handNumber).toBe(hand + 1);
+    // Not mid-hand.
+    expect(runner.canSkipWait()).toBe(false);
+  });
+
+  it("holds for the hint and the cheat sheet, and ends when the player leaves", () => {
+    const { env, runner } = make();
+    runner.attach();
+    env.advanceBy(3000);
+    runner.hold("sheet");
+    const seq = runner.current.game.s.logSeq;
+    env.advanceBy(60_000);
+    expect(runner.current.game.s.logSeq).toBe(seq);
+    runner.release("sheet");
+    runner.leave();
+    expect(runner.getSnapshot().session.ended).toBe("left");
+    expect(env.pendingTimeouts).toBe(0);
+  });
+
   it("reports a refused move as an error without throwing", () => {
     const { env, runner } = make();
     runner.attach();

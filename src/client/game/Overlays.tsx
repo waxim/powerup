@@ -23,15 +23,17 @@ interface Props {
   view: TableView;
   send: (msg: ClientMessage) => void;
   serverNow: number;
+  /** A practice game has its own end screen. */
+  practice?: boolean;
 }
 
 /** Choices that interrupt play: power decisions, rebuys, pause and the final standings. */
-export function Overlays({ view, send, serverNow }: Props) {
+export function Overlays({ view, send, serverNow, practice = false }: Props) {
   const me = view.me;
   const you = view.players.find((p) => p.isYou);
   const isHost = view.youId === view.hostId;
 
-  if (view.status === "finished") {
+  if (view.status === "finished" && !practice) {
     const standings = [...view.players].sort((a, b) => (a.place ?? 99) - (b.place ?? 99));
     const winner = standings[0];
     return (
@@ -138,11 +140,13 @@ export function Overlays({ view, send, serverNow }: Props) {
     return (
       <Modal title="Paused" icon={<Pause size={22} aria-hidden />}>
         <p>
-          {view.autoPaused
-            ? "Everyone left, so the game paused itself."
-            : hostHere
-              ? "The host has paused the game. The clock is stopped."
-              : "The host paused the game and has gone offline. Anyone can resume."}
+          {practice
+            ? "The clock is stopped."
+            : view.autoPaused
+              ? "Everyone left, so the game paused itself."
+              : hostHere
+                ? "The host has paused the game. The clock is stopped."
+                : "The host paused the game and has gone offline. Anyone can resume."}
         </p>
         {canResume && (
           <div className="modal-actions">

@@ -1,14 +1,15 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { newBotMemory, pickOpponents, practiceBot } from "../src/client/practice/bot";
-import { LocalTable, type BotMove } from "../src/client/practice/localTable";
+import { LocalTable, type BotMove, type BotPolicy } from "../src/client/practice/localTable";
 import { preflopEquity, preflopPercentile } from "../src/client/practice/preflop";
-import type { Game } from "../src/engine/game";
+import { Game } from "../src/engine/game";
 import { seededRng } from "../src/engine/rng";
 import { buildView } from "../src/engine/view";
 import type { Card } from "../src/shared/cards";
+import type { TableView } from "../src/shared/protocol";
 import { givePowers, powerId, rig, seats, startGame, toAct, type Ctx } from "./helpers";
-import { T0, config, drive } from "./practice.helpers";
+import { T0, config, drive, passive } from "./practice.helpers";
 
 const NOVA = 3;
 
@@ -183,7 +184,7 @@ describe("practice bot decisions", () => {
 
   it("only use what they're allowed to see", () => {
     // The bot's code can't reach the engine's hidden state: it's handed a view, nothing else.
-    for (const file of ["bot.ts", "worlds.ts", "preflop.ts", "coach.ts"]) {
+    for (const file of ["bot.ts", "worlds.ts", "preflop.ts", "tips.ts"]) {
       const src = readFileSync(new URL(`../src/client/practice/${file}`, import.meta.url), "utf8");
       expect(src, file).not.toMatch(/engine\/(game|state|view|dispatch)"/);
       expect(src, file).not.toMatch(/Math\.random|Date\.now/);
@@ -193,4 +194,142 @@ describe("practice bot decisions", () => {
       expect(src, file).not.toMatch(/Math\.random/);
     }
   });
+});
+
+/** Plays a session with every seat run by the bot policy, recording each bot decision with its view. */
+function traced(opponents: number, seed: number, orbits: number) {
+  const decisions: { view: TableView; move: BotMove | null; id: string }[] = [];
+  const t = new LocalTable(config({ opponents, seed, orbits }), T0, (view, rng, profile, memory) => {
+    const move = practiceBot(view, rng, profile, memory);
+    decisions.push({ view, move, id: view.youId! });
+    return move;
+  });
+  const rng = seededRng(seed + 7);
+  const memory = newBotMemory();
+  drive(t, T0, { human: (v) => practiceBot(v, rng, 3, memory) });
+  return { t, decisions };
+}
+
+describe("practice bots, over whole sessions", () => {
+  it("go easy for the first two hands: no EMP and no re-raises", () => {
+    for (const seed of [1, 2, 3, 4, 5, 6]) {
+      const { decisions } = traced(2, seed, 1);
+      for (const d of decisions.filter((x) => x.view.handNumber <= 2)) {
+        if (d.move?.t === "power") expect(d.view.me!.powers.find((p) => p.id === (d.move as { powerId: string }).powerId)!.type).not.toBe("emp");
+        const facingRaise = d.view.hand?.street === "preflop" && (d.view.hand.currentBet ?? 0) > d.view.level.bb;
+        if (facingRaise && d.move?.t === "act") expect(d.move.action).not.toBe("raise");
+      }
+    }
+  });
+
+  it("follow an EMP with a bet or a call, never a check or a fold", () => {
+    let emps = 0;
+    for (const seed of [11, 12, 13, 14, 15, 16, 17, 18]) {
+      const { decisions } = traced(3, seed, 4);
+      decisions.forEach((d, i) => {
+        if (d.move?.t !== "power" || d.view.me!.powers.find((p) => p.id === (d.move as { powerId: string }).powerId)?.type !== "emp") return;
+        emps++;
+        const next = decisions.slice(i + 1).find((x) => x.id === d.id);
+        if (!next || next.view.hand?.number !== d.view.hand?.number || next.view.hand?.street !== d.view.hand?.street) return;
+        expect(next.move?.t === "act" && ["call", "raise"].includes(next.move.action), JSON.stringify(next.move)).toBe(true);
+      });
+    }
+    expect(emps).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("can't be influenced by cards they can't see", () => {
+    // Shuffle every card the bot can't see (other hands, deeper deck) and rebuild its view: nothing changes.
+    let checked = 0;
+    let t!: LocalTable;
+    const probe: BotPolicy = (view, rng, profile, memory) => {
+      const s = structuredClone(t.game.s);
+      const h = s.hand;
+      if (h && h.phase === "betting" && checked < 200) {
+        const slots: { get(): Card; set(c: Card): void }[] = [];
+        for (const hp of h.players) {
+          if (hp.id === view.youId) continue;
+          hp.hole.forEach((c) => {
+            if (!c.exposed) slots.push({ get: () => c.card, set: (x) => (c.card = x) });
+          });
+        }
+        for (let i = 3; i < h.deck.length; i++) slots.push({ get: () => h.deck[i], set: (x) => (h.deck[i] = x) });
+        const cards = slots.map((x) => x.get());
+        const r = seededRng(checked);
+        for (let i = cards.length - 1; i > 0; i--) {
+          const j = r.int(i + 1);
+          [cards[i], cards[j]] = [cards[j], cards[i]];
+        }
+        slots.forEach((x, i) => x.set(cards[i]));
+        const other = buildView(new Game(s, seededRng(1)), view.youId!, view.serverNow, new Set(s.players.map((p) => p.id)));
+        expect(other).toEqual(view);
+        checked++;
+      }
+      return practiceBot(view, rng, profile, memory);
+    };
+    t = new LocalTable(config({ opponents: 3, orbits: 3, seed: 5 }), T0, probe);
+    drive(t, T0, { human: (v) => practiceBot(v, seededRng(2), 0) });
+    expect(checked).toBeGreaterThan(50);
+  });
+
+  it("play like people: a realistic mix of folds, raises, showdowns and powers", () => {
+    let hands = 0;
+    let raisedPre = 0;
+    let powers = 0;
+    let preflopPowers = 0;
+    let botHands = 0;
+    const types = new Set<string>();
+    for (const [opponents, seed] of [[2, 21], [2, 22], [5, 23], [5, 24]] as const) {
+      const { t, decisions } = traced(opponents, seed, 4);
+      const handsSeen = new Set<number>();
+      for (const d of decisions) {
+        const h = d.view.hand!;
+        if (d.move?.t === "power") {
+          powers++;
+          if (h.street === "preflop") preflopPowers++;
+          types.add(d.view.me!.powers.find((p) => p.id === (d.move as { powerId: string }).powerId)!.type);
+        }
+        if (h.street === "preflop" && d.move?.t === "act" && d.move.action === "raise" && !handsSeen.has(h.number)) {
+          handsSeen.add(h.number);
+          raisedPre++;
+        }
+      }
+      hands += t.game.s.handNumber;
+      botHands += t.game.s.handNumber * opponents;
+    }
+    expect(raisedPre / hands).toBeGreaterThan(0.35);
+    expect(powers / botHands).toBeGreaterThan(0.25);
+    expect(powers / botHands).toBeLessThan(1.2);
+    expect(preflopPowers / powers).toBeLessThan(0.45);
+    expect(types.size).toBe(10);
+  }, 120_000);
+
+  it("pace a newcomer's first hands: new powers to try and bots that don't dawdle", () => {
+    let enough = 0;
+    const gaps: number[] = [];
+    for (let seed = 1; seed <= 10; seed++) {
+      const t = new LocalTable(config({ seed, orbits: 2 }), T0, practiceBot);
+      const dealt = new Set<string>();
+      const rng = seededRng(seed);
+      drive(t, T0, {
+        until: (x) => x.game.s.handNumber > 4,
+        human: (v) => {
+          for (const p of v.me?.powers ?? []) dealt.add(p.type);
+          const playable = v.me?.legal ? v.me.powers.find((p) => p.playable && p.type !== "disintegrate" && p.type !== "reload") : undefined;
+          if (playable && rng.int(2) === 0) return { t: "power", powerId: playable.id };
+          return passive(v, rng, 0);
+        },
+      });
+      if (dealt.size >= 5) enough++;
+      const log = t.game.s.log;
+      for (let i = 1; i < log.length; i++) {
+        const l = log[i];
+        if (l.kind === "action" && t.bots.some((b) => b.id === l.playerId) && log[i - 1].kind === "action") gaps.push(l.at - log[i - 1].at);
+      }
+    }
+    expect(enough).toBeGreaterThanOrEqual(8);
+    gaps.sort((a, b) => a - b);
+    const median = gaps[Math.floor(gaps.length / 2)];
+    expect(median).toBeGreaterThanOrEqual(500);
+    expect(median).toBeLessThanOrEqual(2000);
+  }, 60_000);
 });

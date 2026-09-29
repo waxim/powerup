@@ -23,6 +23,30 @@ Runs entirely on Cloudflare: a Worker serves the app and each table lives in its
 
 Your seat is remembered in your browser. To move to another device, use **Menu → Copy my seat link**.
 
+## Try it against bots
+
+New to Power Up? Open **`/try`** (or "Try it against bots" on the home page) to play a few orbits against
+computer players before your first real game. It runs entirely in your browser: no table is created and
+nothing is sent to the server.
+
+- **Pick 1–5 opponents and 2, 3 or 5 orbits.** Four or more players gets you the Double game. Stacks are
+  1,500 at 10/20 with blinds rising every 4 minutes, and rebuys are free.
+- **Meet every power.** Your first hand holds X-Ray, Reload and Deploy. Each power you use is replaced by
+  one you haven't held yet, so a few orbits introduce all ten. Only the power types are chosen for you;
+  the cards are never rigged, and the bots are dealt normally.
+- **Tips as things happen.** A short tip explains each power the first time you pick it up or a bot plays
+  it, plus your first turn, the flop, showdowns, the all-in shield and more. Tap **Hint** on your turn for
+  the coach's view (your odds, the price of a call, a power worth trying), or open the **cheat sheet** for
+  all the powers and the hand rankings.
+- **Nothing runs while you're away.** The game clock stops while you read a tip, while the tab is hidden
+  and while your phone sleeps, so you never time out mid-read.
+- **Bots with personalities.** Pixel loves a power, Bolt bluffs, Echo likes to see flops, Nova is solid
+  and Vega waits for a big pot. They play position-aware preflop ranges, bet from simulated equity, use
+  powers when the chips they expect to gain outweigh the energy spent, and only ever see what a player in
+  their seat would. They take it easy for the first two hands.
+- **At the end**, a summary shows your chips, best hand, biggest pot and which powers you've tried, with
+  buttons to keep playing, play again or create a real table.
+
 ## Rules
 
 PowerUp is no-limit hold'em: two hole cards, flop, turn, river, best five-card hand wins. It's a sit & go
@@ -83,6 +107,10 @@ Browser (React SPA) ──WebSocket──▶ Worker ──▶ Durable Object "Po
   after every change, rolls back on errors, pauses a game when everyone has left, and deletes tables idle
   for 3 days.
 - **`src/client/`**: React UI (Vite), mobile-first, with self-hosted fonts (SIL OFL).
+- **`src/client/practice/`**: the Try mode, lazy-loaded so the main bundle doesn't carry the engine.
+  `LocalTable` runs the same engine, message dispatch and views as a real table, stepping timers and bot
+  moves one event at a time in virtual time. `PracticeRunner` drives it from the browser, and `bot.ts` is the
+  bot brain: preflop tables, Monte Carlo "worlds" shared across options, and per-power valuations.
 - Accountless identity: joining returns a random seat token stored in `localStorage`. Whoever holds the
   token owns the seat.
 
@@ -91,9 +119,13 @@ Browser (React SPA) ──WebSocket──▶ Worker ──▶ Durable Object "Po
 ```sh
 npm install
 npm run dev          # Vite + the Worker/Durable Object running locally in workerd → http://localhost:5173
-npm test             # engine unit tests, including randomised full games
+npm test             # engine, practice driver and bot tests, including randomised full games
 npm run typecheck
+npm run check:bundle # build, then check the practice mode stays out of the main bundle
 node scripts/bots.ts --players 6   # bots play a full game against the dev server
+
+# Tune the practice bots: plays bot-only sessions and prints how often they play, raise and use powers
+npx esbuild scripts/practice-sim.ts --bundle --platform=node --format=esm --outfile=/tmp/sim.mjs && node /tmp/sim.mjs
 ```
 
 ## Deploying to Cloudflare

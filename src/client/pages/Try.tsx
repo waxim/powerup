@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, Bot, ChevronLeft, Play, RotateCcw, Settings2, Sparkles, Trophy } from "lucide-react";
+import { ArrowRight, BookOpen, Bot, ChevronLeft, ChevronRight, Lightbulb, Play, RotateCcw, Settings2, Sparkles, Trophy } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { MODE_RULES, POWERS, POWER_TYPES, modeForPlayers, type PowerType } from "../../shared/powers";
 import type { TableView } from "../../shared/protocol";
@@ -8,6 +8,8 @@ import { chips, ordinal } from "../lib/format";
 import { linkHandler, navigate } from "../lib/router";
 import { getJson, getPref, getSavedName, saveName, setJson, setPref } from "../lib/storage";
 import { PERSONALITIES, pickOpponents } from "../practice/bot";
+import { adviceText } from "../practice/advice";
+import { CheatSheet } from "../practice/CheatSheet";
 import { Coach, resetSeenTips } from "../practice/Coach";
 import { PRACTICE_DEFAULTS, type PracticeConfig } from "../practice/localTable";
 import { newSeed, type PracticeRunner, type SessionInfo } from "../practice/runner";
@@ -150,6 +152,7 @@ function TrySetup({ onStart }: { onStart: (c: PracticeConfig) => void }) {
             {PRACTICE_DEFAULTS.startingSmallBlind * 2}, rising every {PRACTICE_DEFAULTS.levelMinutes} minutes
           </li>
           <li>Free rebuys if you run out</li>
+          <li>New powers are dealt to you first, so you meet them all (the cards are never rigged)</li>
           <li>
             You'll play{" "}
             {bots.map((b, i) => (
@@ -186,11 +189,28 @@ function TrySetup({ onStart }: { onStart: (c: PracticeConfig) => void }) {
   );
 }
 
+const TRIED_KEY = "try:tried";
+
+/** "A", "A and B", "A, B and C". */
+const listOf = (items: string[]) => (items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : (items[0] ?? ""));
+
+function loadTried(): Set<PowerType> {
+  const saved = getJson<unknown>(TRIED_KEY, []);
+  return new Set(Array.isArray(saved) ? POWER_TYPES.filter((t) => saved.includes(t)) : []);
+}
+
 function PracticeGame({ config, onSetup }: { config: PracticeConfig; onSetup: () => void }) {
   const { conn, session, runner } = usePracticeTable(config);
   const [tips, setTips] = useState(() => getPref("tips", true));
   const [actions, setActions] = useState(0);
+  const [selected, setSelected] = useState<PowerType | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+  const [sheet, setSheet] = useState(false);
+  // Powers tried in earlier sessions, so the summary can point out the new ones.
+  const [triedBefore] = useState(loadTried);
   const { error, clearError } = conn;
+  const v = conn.view!;
+  const myTurn = !!v.me?.legal;
 
   useEffect(() => {
     if (!error) return;
@@ -198,27 +218,54 @@ function PracticeGame({ config, onSetup }: { config: PracticeConfig; onSetup: ()
     return () => clearTimeout(t);
   }, [error, clearError]);
 
-  // Count the player's moves so a tip gets out of the way once they act.
+  // Count the player's moves so tips and hints get out of the way once they act.
   const send = conn.send;
   const tracked = useMemo(
     () => ({
       ...conn,
       send: (msg: Parameters<typeof send>[0]) => {
         setActions((n) => n + 1);
+        setHint(null);
         send(msg);
       },
     }),
     [conn, send],
   );
 
+  // The game waits while the hint or the cheat sheet is open.
+  useEffect(() => {
+    if (!hint) return;
+    runner.hold("hint");
+    return () => runner.release("hint");
+  }, [hint, runner]);
+  useEffect(() => {
+    if (!sheet) return;
+    runner.hold("sheet");
+    return () => runner.release("sheet");
+  }, [sheet, runner]);
+  useEffect(() => {
+    if (!myTurn) setHint(null);
+  }, [myTurn]);
+
+  const tried = useMemo(() => new Set(POWER_TYPES.filter((t) => session.stats.powersPlayed[t])), [session.stats]);
+  useEffect(() => {
+    if (!tried.size) return;
+    setJson(TRIED_KEY, POWER_TYPES.filter((t) => tried.has(t) || loadTried().has(t)));
+  }, [tried]);
+
   const setTipsOn = useCallback((on: boolean) => {
     setPref("tips", on);
     setTips(on);
   }, []);
   const onHold = useCallback((on: boolean) => (on ? runner.hold("coach") : runner.release("coach")), [runner]);
+  const showHint = () => {
+    const thought = runner.advise();
+    setHint(thought ? adviceText(thought, v) : "Nothing to decide right now.");
+  };
 
-  const v = conn.view!;
   const progress = `hand ${Math.min(v.handNumber, session.handLimit) || 1} of ${session.handLimit}`;
+  // Skipping the pause after a hand only once the newcomer has seen a few play out.
+  const canSkip = !session.ended && v.handNumber >= 3 && runner.canSkipWait();
 
   return (
     <>
@@ -229,23 +276,56 @@ function PracticeGame({ config, onSetup }: { config: PracticeConfig; onSetup: ()
           progress,
           tips,
           onToggleTips: () => setTipsOn(!tips),
+          onCheatSheet: () => setSheet(true),
+          onPowerSelect: setSelected,
           onRestart: () => runner.restart(),
-          onExit: onSetup,
+          onExit: () => runner.leave(),
         }}
         floating={
-          tips && !session.ended ? (
-            <Coach
-              key={session.id}
-              view={v}
-              handLimit={session.handLimit}
-              actions={actions}
-              onHold={onHold}
-              onDisable={() => setTipsOn(false)}
-            />
-          ) : null
+          session.ended ? null : (
+            <div className="practice-float">
+              <div className="practice-chips">
+                {canSkip && (
+                  <button type="button" className="chip-btn" onClick={() => runner.skipWait()}>
+                    Next hand <ChevronRight size={16} aria-hidden />
+                  </button>
+                )}
+                {myTurn && !hint && (
+                  <button type="button" className="chip-btn chip-hint" onClick={showHint}>
+                    <Lightbulb size={16} aria-hidden /> Hint
+                  </button>
+                )}
+              </div>
+              {hint && (
+                <div className="coach coach-hint" role="status" aria-live="polite">
+                  <Lightbulb size={18} className="coach-icon" aria-hidden />
+                  <span className="coach-text">
+                    <strong>Coach's view:</strong> {hint}
+                  </span>
+                  <button type="button" className="coach-next" onClick={() => setHint(null)}>
+                    Got it
+                  </button>
+                </div>
+              )}
+              {tips && (
+                <Coach
+                  key={session.id}
+                  view={v}
+                  handLimit={session.handLimit}
+                  actions={actions}
+                  selected={selected}
+                  tried={tried.size}
+                  suppressed={!!hint || sheet}
+                  onHold={onHold}
+                  onDisable={() => setTipsOn(false)}
+                />
+              )}
+            </div>
+          )
         }
       />
-      {session.ended && <Summary view={v} runner={runner} session={session} onSetup={onSetup} />}
+      {sheet && <CheatSheet view={v} tried={tried} onClose={() => setSheet(false)} />}
+      {session.ended && <Summary view={v} runner={runner} session={session} triedBefore={triedBefore} onSetup={onSetup} />}
       {error && (
         <div className="toast-error" role="alert" onClick={clearError}>
           {error}
@@ -255,26 +335,45 @@ function PracticeGame({ config, onSetup }: { config: PracticeConfig; onSetup: ()
   );
 }
 
-function Summary({ view: v, runner, session, onSetup }: { view: TableView; runner: PracticeRunner; session: SessionInfo; onSetup: () => void }) {
+function Summary({
+  view: v,
+  runner,
+  session,
+  triedBefore,
+  onSetup,
+}: {
+  view: TableView;
+  runner: PracticeRunner;
+  session: SessionInfo;
+  triedBefore: ReadonlySet<PowerType>;
+  onSetup: () => void;
+}) {
   const you = v.players.find((p) => p.isYou);
   const { stats } = session;
   const net = (you?.chips ?? 0) - session.startingChips * (1 + session.rebuys);
   const rank = [...v.players].sort((a, b) => b.chips - a.chips).findIndex((p) => p.isYou) + 1;
-  const out = session.ended === "out";
-  const title = out ? "Practice over" : session.ended === "finished" ? "Game over" : `${session.handLimit / v.players.length} orbits played`;
-  const tried = POWER_TYPES.filter((t) => stats.powersPlayed[t]);
-  const faced = POWER_TYPES.filter((t) => stats.powersFaced[t] && !stats.powersPlayed[t]);
+  const orbits = Math.round(session.handLimit / v.players.length);
+  const title =
+    session.ended === "out"
+      ? "Thanks for playing!"
+      : session.ended === "left"
+        ? "Practice ended"
+        : session.ended === "finished"
+          ? "Game over"
+          : `${orbits} orbit${orbits > 1 ? "s" : ""} played`;
+  const played = POWER_TYPES.filter((t) => stats.powersPlayed[t]);
+  const overall = new Set([...triedBefore, ...played]);
+  const pot = stats.biggestPot;
 
   return (
     <div className="modal-backdrop">
       <div className="modal modal-win try-summary" role="dialog" aria-modal="true" aria-label="Practice summary">
         <h2>
-          {rank === 1 && !out ? <Trophy size={22} aria-hidden /> : <Sparkles size={22} aria-hidden />} {title}
+          {rank === 1 && session.ended === "orbits" ? <Trophy size={22} aria-hidden /> : <Sparkles size={22} aria-hidden />} {title}
         </h2>
         <p className="try-headline">
-          {out
-            ? "Thanks for playing!"
-            : `${net >= 0 ? "+" : "−"}${chips(Math.abs(net))} chips · ${ordinal(rank)} biggest stack of ${v.players.length}`}
+          {net >= 0 ? "+" : "−"}
+          {chips(Math.abs(net))} chips · {ordinal(rank)} of {v.players.length}
         </p>
         <dl className="try-stats">
           <div>
@@ -284,22 +383,43 @@ function Summary({ view: v, runner, session, onSetup }: { view: TableView; runne
             </dd>
           </div>
           <div>
-            <dt>Biggest pot</dt>
-            <dd>{stats.biggestWin ? chips(stats.biggestWin) : "–"}</dd>
+            <dt>Best hand</dt>
+            <dd className="try-stat-text">{stats.bestHand?.label ?? "–"}</dd>
           </div>
           <div>
             <dt>Rebuys</dt>
             <dd>{session.rebuys}</dd>
           </div>
         </dl>
-        <PowerList label="Powers you played" types={tried} counts={stats.powersPlayed} empty="None yet. Tap a power card on your turn." />
-        {faced.length > 0 && <PowerList label="Powers used against you" types={faced} counts={stats.powersFaced} />}
-        <p className="muted small">
-          {tried.length + faced.length < POWER_TYPES.length
-            ? `${POWER_TYPES.length - tried.length - faced.length} powers still to discover. `
-            : ""}
-          Ready for the real thing? Create a table and share the link with friends.
-        </p>
+        {pot && (
+          <p className="try-pot">
+            Biggest pot: <strong>{chips(pot.amount)}</strong>
+            {pot.label ? ` with ${/^[AEIOU]/.test(pot.label) ? "an" : "a"} ${pot.label}` : ""}
+            {pot.powers.length ? `, after ${listOf([...new Set(pot.powers)].map((t) => POWERS[t].name))}` : ""}
+          </p>
+        )}
+        <div className="try-powers">
+          <h3>Powers</h3>
+          <ul>
+            {POWER_TYPES.map((t) => {
+              const count = stats.powersPlayed[t] ?? 0;
+              const state = count ? "is-played" : stats.powersFaced[t] ? "is-faced" : "is-unseen";
+              return (
+                <li key={t} className={state} style={{ ["--power" as string]: POWERS[t].color }} title={`${POWERS[t].name}: ${POWERS[t].text}`}>
+                  <PowerIcon type={t} size={18} />
+                  {POWERS[t].name}
+                  {count > 1 && <small>×{count}</small>}
+                  {count > 0 && !triedBefore.has(t) && <b className="try-new">New</b>}
+                </li>
+              );
+            })}
+          </ul>
+          <p className="muted small">
+            Tried {played.length} of 10 this session{overall.size > played.length ? ` · ${overall.size} of 10 overall` : ""}. Solid:
+            played by you; outlined: played against you.
+          </p>
+        </div>
+        <p className="muted small">Ready for the real thing? Create a table and share the link with friends.</p>
         <div className="modal-actions try-actions">
           <button type="button" className="btn btn-primary" onClick={() => navigate("/")}>
             Play with friends <ArrowRight size={18} aria-hidden />
@@ -320,37 +440,6 @@ function Summary({ view: v, runner, session, onSetup }: { view: TableView; runne
           </a>
         </div>
       </div>
-    </div>
-  );
-}
-
-function PowerList({
-  label,
-  types,
-  counts,
-  empty,
-}: {
-  label: string;
-  types: PowerType[];
-  counts: Partial<Record<PowerType, number>>;
-  empty?: string;
-}) {
-  return (
-    <div className="try-powers">
-      <h3>{label}</h3>
-      {types.length ? (
-        <ul>
-          {types.map((t) => (
-            <li key={t} style={{ ["--power" as string]: POWERS[t].color }} title={POWERS[t].text}>
-              <PowerIcon type={t} size={18} />
-              {POWERS[t].name}
-              {(counts[t] ?? 0) > 1 && <small>×{counts[t]}</small>}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="muted small">{empty}</p>
-      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
-import { WifiOff } from "lucide-react";
-import { useEffect } from "react";
+import { Bot, WifiOff } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { TryLink } from "../components/TryLink";
 import { GameTable } from "../game/GameTable";
 import { linkHandler } from "../lib/router";
 import { useTable } from "../lib/useTable";
@@ -24,6 +25,24 @@ export function TablePage({ id }: { id: string }) {
     };
   }, [conn.view?.settings.name]);
 
+  // Waiting players often practise in another tab: tell them when their game starts.
+  const status = conn.view?.status;
+  const lastStatus = useRef(status);
+  useEffect(() => {
+    const was = lastStatus.current;
+    lastStatus.current = status;
+    if (was !== "lobby" || status !== "running" || !document.hidden) return;
+    const title = document.title;
+    document.title = "▶ Your game started · PowerUp";
+    const onVisible = () => {
+      if (document.hidden) return;
+      document.title = title;
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [status]);
+
   if (conn.status === "notfound") {
     return (
       <div className="page center-page">
@@ -33,6 +52,9 @@ export function TablePage({ id }: { id: string }) {
         <a className="btn btn-primary" href="/" onClick={linkHandler("/")}>
           Create a new table
         </a>
+        <TryLink className="btn btn-ghost">
+          <Bot size={18} aria-hidden /> Try a practice game
+        </TryLink>
       </div>
     );
   }

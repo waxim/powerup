@@ -1,5 +1,5 @@
 /** Why the practice clock is frozen. Several reasons can hold it at once. */
-export type HoldReason = "hidden" | "coach" | "ended" | "detached";
+export type HoldReason = "hidden" | "coach" | "hint" | "sheet" | "ended" | "detached";
 
 /**
  * Game time for a practice table. It follows the real clock but stands still while held (tab hidden,
@@ -39,6 +39,11 @@ export class VirtualClock {
     // Carry on exactly where time stopped.
     this.offset = this.real() - this.frozenAt;
     this.lastBeat = this.real();
+  }
+
+  /** Jump ahead (skip the wait before the next hand). */
+  skip(ms: number): void {
+    if (!this.holds.size && ms > 0) this.offset -= ms;
   }
 
   /**

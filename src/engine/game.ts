@@ -66,10 +66,17 @@ export function ordinal(n: number): string {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
+/** Optional behaviour for practice tables. Real tables never pass any, so they play exactly as before. */
+export interface GameHooks {
+  /** Choose the type of a power card being dealt. Ignored unless it is one of `candidates`. */
+  pickPower?(player: Readonly<Player>, candidates: readonly PowerType[], handNumber: number): PowerType | undefined;
+}
+
 export class Game {
   constructor(
     public s: TableState,
     private rng: Rng,
+    private hooks: GameHooks = {},
   ) {}
 
   /* ---------------------------------------------------------------- */
@@ -82,6 +89,7 @@ export class Game {
     hostName: string;
     now: number;
     rng: Rng;
+    hooks?: GameHooks;
   }): { game: Game; host: Player } {
     const settings = sanitizeSettings(opts.settings);
     const state: TableState = {
@@ -108,7 +116,7 @@ export class Game {
       log: [],
       logSeq: 0,
     };
-    const game = new Game(state, opts.rng);
+    const game = new Game(state, opts.rng, opts.hooks);
     const host = game.join(opts.hostName, opts.now);
     state.hostId = host.id;
     return { game, host };
@@ -932,24 +940,27 @@ export class Game {
   private refillPowers(p: Player): void {
     const handSize = MODE_RULES[this.mode].handSize;
     const pool = this.s.settings.powers;
-    const mode = this.mode;
     while (p.powers.length < handSize) {
       const held = new Set(p.powers.map((c) => c.type));
       let candidates = pool.filter((t) => !held.has(t));
       if (!candidates.length) candidates = [...pool];
-      const weights = candidates.map((t) => Math.round(POWERS[t].weight[mode] * 100));
-      const total = weights.reduce((a, b) => a + b, 0);
-      let roll = this.rng.int(total);
-      let pick = candidates[candidates.length - 1];
-      for (let i = 0; i < candidates.length; i++) {
-        if (roll < weights[i]) {
-          pick = candidates[i];
-          break;
-        }
-        roll -= weights[i];
-      }
-      p.powers.push({ id: randomId(this.rng, 8), type: pick });
+      const hint = this.hooks.pickPower?.(p, candidates, this.s.handNumber);
+      const type = hint && candidates.includes(hint) ? hint : this.rollPower(candidates);
+      p.powers.push({ id: randomId(this.rng, 8), type });
     }
+  }
+
+  /** A random power type, weighted by how often each is dealt in this mode. */
+  private rollPower(candidates: PowerType[]): PowerType {
+    const mode = this.mode;
+    const weights = candidates.map((t) => Math.round(POWERS[t].weight[mode] * 100));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let roll = this.rng.int(total);
+    for (let i = 0; i < candidates.length; i++) {
+      if (roll < weights[i]) return candidates[i];
+      roll -= weights[i];
+    }
+    return candidates[candidates.length - 1];
   }
 
   lastClonable(): PowerType | null {

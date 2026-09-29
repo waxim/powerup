@@ -23,6 +23,88 @@ describe("practice table", () => {
     expect(t.handLimit).toBe(9);
   });
 
+  it("deals the player the starter powers, then ones they haven't met, and leaves the bots alone", () => {
+    const t = table({ orbits: 5 });
+    const types = () => t.game.player(t.humanId).powers.map((c) => c.type);
+    expect(types()).toEqual(["xray", "reload", "deploy"]);
+    expect(table({ opponents: 4 }).game.player(table({ opponents: 4 }).humanId).powers.map((c) => c.type)).toEqual([
+      "xray",
+      "reload",
+      "deploy",
+      "intel",
+    ]);
+    // Play X-Ray whenever possible; its replacement is the first new power in the curriculum.
+    const met = new Set(types());
+    let now = drive(t, T0, {
+      until: (x) => !x.game.player(x.humanId).powers.some((c) => c.type === "xray"),
+      human: (v) => {
+        const xray = v.me?.legal && v.me.powers.find((p) => p.type === "xray" && p.playable);
+        if (xray) return { t: "power", powerId: xray.id };
+        return passive(v, { int: () => 0 }, 0);
+      },
+    });
+    const hand = t.game.s.handNumber;
+    now = drive(t, now, { until: (x) => x.game.s.handNumber > hand });
+    const fresh = types().filter((x) => !met.has(x));
+    expect(fresh).toEqual(["upgrade"]);
+    // Bots are dealt at random, not from the curriculum.
+    const botTypes = t.bots.flatMap((b) => t.game.player(b.id).powers.map((c) => c.type));
+    expect(botTypes.join()).not.toBe("xray,reload,deploy,xray,reload,deploy");
+    void now;
+  });
+
+  it("never thinks for a bot inside the player's move", () => {
+    let calls = 0;
+    const t = table({}, (view, rng, profile, memory) => {
+      calls++;
+      return passive(view, rng, profile, memory);
+    });
+    let now = T0;
+    for (let i = 0; i < 2000 && t.game.s.handNumber < 3; i++) {
+      const v = t.view(now);
+      if (needsHuman(v)) {
+        const before = calls;
+        t.send(passive(v, { int: () => 0 }, 0)!, now);
+        expect(calls).toBe(before);
+      } else {
+        now = Math.max(now, t.nextWakeAt()!);
+        t.advance(now);
+      }
+    }
+    expect(calls).toBeGreaterThan(5);
+  });
+
+  it("gives hints without changing how the game plays out", () => {
+    const run = (hints: boolean) => {
+      const t = table({ seed: 12, orbits: 2 }, practiceBot);
+      let given = 0;
+      drive(t, T0, {
+        human: (v) => {
+          if (hints && v.me?.legal) {
+            const tip = t.advise(v.serverNow);
+            expect(tip).not.toBeNull();
+            given++;
+          }
+          return passive(v, { int: () => 0 }, 0);
+        },
+      });
+      return { log: t.game.s.log.map((l) => l.text), given };
+    };
+    const plain = run(false);
+    const hinted = run(true);
+    expect(hinted.given).toBeGreaterThan(3);
+    expect(hinted.log).toEqual(plain.log);
+  });
+
+  it("stops when the player leaves", () => {
+    const t = table();
+    const now = drive(t, T0, { until: (x) => x.game.s.handNumber >= 2 });
+    t.leave();
+    expect(t.ended).toBe("left");
+    expect(t.nextWakeAt()).toBeNull();
+    expect(t.advance(now + 600_000)).toBe(false);
+  });
+
   it("gives the bots other names when the player takes one of theirs", () => {
     for (const name of ["nova", "PIXEL", " Bolt ", "Juno"]) {
       const t = table({ name, opponents: 5 });
@@ -206,6 +288,7 @@ describe("practice table", () => {
     expect(t.stats.powersPlayed).toEqual(played);
     expect(t.stats.handsWon).toBeGreaterThan(0);
     expect(t.stats.handsWon).toBeLessThanOrEqual(9);
+    expect(t.stats.biggestPot!.amount).toBeGreaterThan(0);
     expect(Object.keys(t.stats.powersFaced).length).toBeGreaterThan(0);
   });
 });

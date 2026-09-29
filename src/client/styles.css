@@ -2931,3 +2931,104 @@ button.power {
     top: 51%;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Practice mode                                                       */
+/* ------------------------------------------------------------------ */
+.try-cta {
+  margin-top: 18px;
+  border-color: rgba(56, 225, 255, 0.45);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 0.9rem;
+}
+
+.try-setup h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.try-facts {
+  margin: 4px 0 8px;
+  padding-left: 1.1em;
+  color: #c3cdf2;
+  font-size: 0.95rem;
+}
+
+.try-facts li {
+  margin-bottom: 4px;
+}
+
+.coach {
+  flex: none;
+  position: relative;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 8px 6px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(255, 209, 102, 0.16), rgba(56, 225, 255, 0.08));
+  border: 1px solid rgba(255, 209, 102, 0.5);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-weight: 600;
+  font-size: 0.92rem;
+  line-height: 1.25;
+  animation: toast-in 0.25s ease-out;
+}
+
+.coach-icon {
+  flex: none;
+  color: var(--gold);
+  filter: drop-shadow(0 0 6px rgba(255, 209, 102, 0.7));
+}
+
+.coach-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.coach-next,
+.coach-off {
+  flex: none;
+  border: 1px solid var(--line-strong);
+  background: rgba(5, 9, 22, 0.6);
+  color: var(--text);
+  border-radius: 10px;
+  min-height: 34px;
+  cursor: pointer;
+}
+
+.coach-next {
+  padding: 0 10px;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.coach-off {
+  width: 34px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+@media (orientation: landscape) and (max-height: 540px) {
+  .game > .coach {
+    grid-column: 1;
+    grid-row: 2;
+    margin: 4px 8px;
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-height: 700px) and (orientation: portrait) {
+  .coach {
+    font-size: 0.82rem;
+    padding: 6px 6px 6px 10px;
+  }
+}

@@ -1,4 +1,4 @@
-import { ChevronLeft, Shield } from "lucide-react";
+import { Bot, ChevronLeft, Shield } from "lucide-react";
 import { MAX_DEPLOYS_PER_HAND, MODE_RULES, POWERS, POWER_TYPES } from "../../shared/powers";
 import { PowerIcon } from "../components/PowerCard";
 import { linkHandler } from "../lib/router";
@@ -22,6 +22,11 @@ export function Rules() {
           PowerUp is no-limit Texas hold'em with a twist. You get two hole cards, then a flop, turn and river as usual, and the best
           five-card hand wins. On top of that, every player holds <strong>powers</strong> that can bend the hand: peek at the deck,
           rebuild your hand, rip cards off the board.
+        </p>
+        <p>
+          <a href="/try" onClick={linkHandler("/try")} className="btn btn-primary">
+            <Bot size={18} aria-hidden /> Try a practice game against bots
+          </a>
         </p>
         <h2>The table</h2>
         <ul>

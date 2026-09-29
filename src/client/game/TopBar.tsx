@@ -1,11 +1,31 @@
-import { BookOpen, Check, Link, Menu, Palette, Pause, Play, ScrollText, Smartphone, Volume2, VolumeX } from "lucide-react";
+import {
+  BookOpen,
+  Check,
+  Link,
+  LogOut,
+  Menu,
+  Palette,
+  Pause,
+  Play,
+  RotateCcw,
+  ScrollText,
+  Smartphone,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ClientMessage, TableView } from "../../shared/protocol";
 import { chips, clock } from "../lib/format";
 import { getSeatToken } from "../lib/storage";
 import { Logo } from "../pages/Home";
 
+export interface PracticeControls {
+  onRestart(): void;
+  onExit(): void;
+}
+
 interface Props {
+  practice?: PracticeControls;
   view: TableView;
   send: (msg: ClientMessage) => void;
   serverNow: number;
@@ -16,7 +36,7 @@ interface Props {
   onToggleLog: () => void;
 }
 
-export function TopBar({ view, send, serverNow, fourColor, setFourColor, sound, setSound, onToggleLog }: Props) {
+export function TopBar({ view, send, serverNow, fourColor, setFourColor, sound, setSound, onToggleLog, practice }: Props) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -68,12 +88,25 @@ export function TopBar({ view, send, serverNow, fourColor, setFourColor, sound, 
         {open && (
           <div className="menu" role="menu">
             <div className="menu-info">
-              {view.settings.name || "PowerUp table"} · hand #{view.handNumber} · {view.mode === "double" ? "Double game" : "Classic"}
+              {practice ? "Practice vs bots" : view.settings.name || "PowerUp table"} · hand #{view.handNumber} ·{" "}
+              {view.mode === "double" ? "Double game" : "Classic"}
             </div>
-            <button type="button" role="menuitem" onClick={() => copy("table", tableUrl)}>
-              {copied === "table" ? <Check size={18} /> : <Link size={18} />} Copy table link
-            </button>
-            {view.youId && token && (
+            {practice && (
+              <>
+                <button type="button" role="menuitem" onClick={practice.onRestart}>
+                  <RotateCcw size={18} /> Start over
+                </button>
+                <button type="button" role="menuitem" onClick={practice.onExit}>
+                  <LogOut size={18} /> Leave practice
+                </button>
+              </>
+            )}
+            {!practice && (
+              <button type="button" role="menuitem" onClick={() => copy("table", tableUrl)}>
+                {copied === "table" ? <Check size={18} /> : <Link size={18} />} Copy table link
+              </button>
+            )}
+            {!practice && view.youId && token && (
               <button type="button" role="menuitem" onClick={() => copy("seat", `${tableUrl}#seat=${token}`)}>
                 {copied === "seat" ? <Check size={18} /> : <Smartphone size={18} />} Copy my seat link (other device)
               </button>

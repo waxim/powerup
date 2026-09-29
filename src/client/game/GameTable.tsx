@@ -1,5 +1,5 @@
 import { Eye, Zap } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Card } from "../../shared/cards";
 import type { LogEntry } from "../../shared/protocol";
 import { chips } from "../lib/format";
@@ -13,9 +13,19 @@ import { LogPanel } from "./LogPanel";
 import { MyPanel, type PowerSelection } from "./MyPanel";
 import { Overlays } from "./Overlays";
 import { Seat } from "./Seat";
-import { TopBar } from "./TopBar";
+import { TopBar, type PracticeControls } from "./TopBar";
 
-export function GameTable({ conn }: { conn: TableConnection }) {
+interface Props {
+  conn: TableConnection;
+  /** Set for a practice game against bots: changes the menu (no invite links) and the labels. */
+  practice?: PracticeControls;
+  /** Extra content between the table and your controls (practice tips). */
+  belowTable?: ReactNode;
+  /** Extra overlay content (practice end-of-session card). */
+  overlay?: ReactNode;
+}
+
+export function GameTable({ conn, practice, belowTable, overlay }: Props) {
   const v = conn.view!;
   const { send } = conn;
   useTicker(200);
@@ -108,6 +118,7 @@ export function GameTable({ conn }: { conn: TableConnection }) {
         sound={sound}
         setSound={setSound}
         onToggleLog={() => setLogOpen((o) => !o)}
+        practice={practice}
       />
       {!you && (
         <div className="banner banner-info">
@@ -150,6 +161,7 @@ export function GameTable({ conn }: { conn: TableConnection }) {
           <LogPanel log={v.log} onClose={() => setLogOpen(false)} />
         </aside>
       </div>
+      {belowTable}
       {me && you ? (
         <MyPanel view={v} send={send} power={power} timeLeft={timeLeftFor(you.id)} winningCards={winningCards} />
       ) : (
@@ -158,6 +170,7 @@ export function GameTable({ conn }: { conn: TableConnection }) {
         </div>
       )}
       <Overlays view={v} send={send} serverNow={now} />
+      {overlay}
     </div>
   );
 }

@@ -40,3 +40,25 @@ describe("Monte Carlo equity", () => {
     expect(eq("2c 3d", [c("2d 3c")], "As Ks Qs Js 9h")).toBe(0.5);
   });
 });
+
+describe("equity with fresh cards", () => {
+  it("values replacing a weak hole card", () => {
+    const keep = eq("7c 2d", [[null, null]]);
+    const reloadDeuce = estimateEquity({ hole: ["7c", null], board: [], opponents: [[null, null]], boardToCome: 5, iterations: 20_000, rng: seededRng(3), dead: ["2d"] });
+    expect(reloadDeuce).toBeGreaterThan(keep + 0.03);
+  });
+
+  it("values destroying a board card that helps the opponent", () => {
+    // Opponent shows a queen and the board paired queens: removing the queen helps our aces.
+    const board = c("Qh 7c 2d");
+    const before = estimateEquity({ hole: c("As Ad"), board, opponents: [["Qs", null]], boardToCome: 2, iterations: 20_000, rng: seededRng(4) });
+    const after = estimateEquity({ hole: c("As Ad"), board: [null, "7c", "2d"], opponents: [["Qs", null]], boardToCome: 2, iterations: 20_000, rng: seededRng(4), dead: ["Qh"] });
+    expect(after).toBeGreaterThan(before + 0.1);
+  });
+
+  it("draws fresh cards from the known next cards first", () => {
+    // Replacing a hole card when the next card is known to be the ace of hearts gives a royal flush.
+    const royal = estimateEquity({ hole: ["Kh", null], board: c("Qh Jh Th 2c 3d"), opponents: [[null, null]], boardToCome: 0, knownNext: ["Ah"], iterations: 500, rng: seededRng(1) });
+    expect(royal).toBe(1);
+  });
+});

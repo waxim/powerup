@@ -6,7 +6,7 @@ import { buildView } from "../../engine/view";
 import { modeForPlayers, type PowerType } from "../../shared/powers";
 import type { ClientMessage, TableView } from "../../shared/protocol";
 import { UNLIMITED_REBUYS, cleanName } from "../../shared/settings";
-import { advise, newBotMemory, notePlayerChoice, pickOpponents, type BotMemory, type Thought } from "./bot";
+import { advise, newBotMemory, notePlayerAction, notePlayerChoice, observePlayer, pickOpponents, type BotMemory, type Thought } from "./bot";
 import { Curriculum } from "./curriculum";
 
 /** What a bot wants to do next. Mirrors the client messages a human would send. */
@@ -93,7 +93,7 @@ export class LocalTable {
   private readonly hintRng: Rng;
   private readonly allIds: Set<string>;
   /** The bot whose move is next: first it decides, then the move is applied after its thinking time. */
-  private botDue: (BotTask & { at: number; seq: number; move?: BotMove }) | null = null;
+  private botDue: (BotTask & { at: number; seq: number; move?: BotMove; memoryBefore?: BotMemory }) | null = null;
   /** The human's own notes (what their Scanner showed them), so the Hint knows it too. */
   private readonly humanMemory = newBotMemory();
   /** Bots whose last move was a power, so their next move waits until the announcement has been read. */
@@ -147,7 +147,9 @@ export class LocalTable {
     if (this.ended) throw new GameError("This practice session is over");
     if (!isPlayerMessage(msg) || msg.t === "start" || msg.t === "rematch") throw new GameError("Not available in practice");
     const before = structuredClone(this.game.s);
-    const scanner = msg.t === "choose" && this.game.s.hand?.pending?.kind === "scanner" ? this.view(now) : null;
+    // The player's own notes, for the Hint: what they saw before this move.
+    const seen = this.view(now);
+    observePlayer(this.humanMemory, seen);
     try {
       applyPlayerMessage(this.game, this.humanId, msg, now);
     } catch (err) {
@@ -155,7 +157,8 @@ export class LocalTable {
       this.game.s = before;
       throw err;
     }
-    if (scanner && msg.t === "choose") notePlayerChoice(this.humanMemory, scanner, msg.index);
+    if (msg.t === "choose" && seen.me?.scanner) notePlayerChoice(this.humanMemory, seen, msg.index);
+    if (msg.t === "act") notePlayerAction(this.humanMemory, seen, msg.action);
     this.afterChange(now);
   }
 
@@ -168,8 +171,14 @@ export class LocalTable {
   /** The player walks away; the summary shows what they did so far. */
   leave(): void {
     if (this.ended) return;
+    // Powers played in the unfinished hand still count as tried.
+    const h = this.game.s.hand;
+    if (h && h.phase !== "done" && h.number !== this.recordedHand) {
+      this.recordedHand = h.number;
+      this.tallyPowers(h.powerHistory);
+    }
     this.ended = "left";
-    this.botDue = null;
+    this.dropDue();
   }
 
   /** Run everything due up to `now`, in time order. Returns true if anything happened. */
@@ -184,7 +193,7 @@ export class LocalTable {
       changed = true;
       if (end !== null && end <= t) {
         this.ended = "orbits";
-        this.botDue = null;
+        this.dropDue();
         break;
       }
       // Bots go first on a tie, so a timer never beats a bot that was already due.
@@ -223,17 +232,18 @@ export class LocalTable {
     if (human?.status === "out") this.ended = "out";
     else if (s.status === "finished") this.ended = "finished";
     if (this.ended) {
-      this.botDue = null;
+      this.dropDue();
       return;
     }
     const task = this.botTask();
     if (!task) {
-      this.botDue = null;
+      this.dropDue();
       return;
     }
     // Keep the bot's decision and thinking time unless something happened since it started thinking.
     const due = this.botDue;
     if (due && due.id === task.id && due.kind === task.kind && due.seq === s.logSeq) return;
+    this.dropDue();
     this.botDue = { ...task, at: now + DECIDE_MS, seq: s.logSeq };
   }
 
@@ -253,6 +263,15 @@ export class LocalTable {
 
   private isBot(id: string): boolean {
     return this.bots.some((b) => b.id === id);
+  }
+
+  /** Forget the bot's pending move. A decision that never gets played mustn't leave traces in its notes either. */
+  private dropDue(): void {
+    const due = this.botDue;
+    this.botDue = null;
+    if (!due?.move || !due.memoryBefore) return;
+    const bot = this.bots.find((b) => b.id === due.id);
+    if (bot) bot.memory = due.memoryBefore;
   }
 
   /** How long a bot "thinks" before a move: long enough to follow, longer for big decisions and powers. */
@@ -287,6 +306,7 @@ export class LocalTable {
     const bot = this.bots.find((b) => b.id === due.id)!;
     if (!due.move) {
       let move: BotMove | null = null;
+      const memoryBefore = structuredClone(bot.memory);
       try {
         // A private copy: nothing the bot does to it can reach the real state.
         move = this.policy(structuredClone(buildView(this.game, bot.id, now, this.allIds)), this.botRng, bot.profile, bot.memory);
@@ -294,6 +314,7 @@ export class LocalTable {
         console.warn("practice bot failed", err);
       }
       if (move) {
+        due.memoryBefore = memoryBefore;
         due.move = move;
         due.at = now + Math.max(0, this.thinkMs(due, move) - DECIDE_MS);
         return;
@@ -329,16 +350,20 @@ export class LocalTable {
     }
   }
 
+  private tallyPowers(history: { playerId: string; type: PowerType }[]): void {
+    for (const { playerId, type } of history) {
+      const tally = playerId === this.humanId ? this.stats.powersPlayed : this.stats.powersFaced;
+      tally[type] = (tally[type] ?? 0) + 1;
+    }
+  }
+
   /** Tally the human's hand once it's over. Only public facts (results and powers played) are used. */
   private recordHand(): void {
     const h = this.game.s.hand;
     if (!h || h.phase !== "done" || h.number === this.recordedHand) return;
     this.recordedHand = h.number;
     const st = this.stats;
-    for (const { playerId, type } of h.powerHistory) {
-      const tally = playerId === this.humanId ? st.powersPlayed : st.powersFaced;
-      tally[type] = (tally[type] ?? 0) + 1;
-    }
+    this.tallyPowers(h.powerHistory);
     if (!h.players.some((p) => p.id === this.humanId)) return;
     st.hands++;
     const won = h.result?.won[this.humanId] ?? 0;

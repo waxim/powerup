@@ -1,5 +1,5 @@
 import { Check, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { POWERS, POWER_TYPES, type PowerType } from "../../shared/powers";
 import type { TableView } from "../../shared/protocol";
 import { HandRankings } from "../components/HandRankings";
@@ -17,6 +17,26 @@ interface Props {
 export function CheatSheet({ view, tried, onClose }: Props) {
   const [tab, setTab] = useState<"powers" | "hands">("powers");
   const held = new Set(view.me?.powers.map((p) => p.type));
+  const close = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // A proper modal: focus moves in, Escape closes it, the table behind can't be reached, and focus goes back after.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const game = document.querySelector<HTMLElement>(".game");
+    game?.setAttribute("inert", "");
+    close.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseRef.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      game?.removeAttribute("inert");
+      opener?.focus();
+    };
+  }, []);
   return (
     <div className="sheet-backdrop" onClick={onClose}>
       <div className="sheet" role="dialog" aria-modal="true" aria-label="Cheat sheet" onClick={(e) => e.stopPropagation()}>
@@ -29,7 +49,7 @@ export function CheatSheet({ view, tried, onClose }: Props) {
               Hands
             </button>
           </div>
-          <button type="button" className="btn btn-ghost icon-only" onClick={onClose} aria-label="Close">
+          <button type="button" className="btn btn-ghost icon-only" onClick={onClose} aria-label="Close" ref={close}>
             <X size={20} />
           </button>
         </header>

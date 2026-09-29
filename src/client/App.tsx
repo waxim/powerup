@@ -1,5 +1,6 @@
 import { Bot } from "lucide-react";
 import { lazy, Suspense } from "react";
+import { LoadErrorBoundary } from "./components/LoadError";
 import { TryLink } from "./components/TryLink";
 import { loadTry } from "./lib/preload";
 import { linkHandler, useRoute } from "./lib/router";
@@ -28,9 +29,11 @@ export function App() {
       return <Rules />;
     case "try":
       return (
-        <Suspense fallback={<Loading />}>
-          <Try />
-        </Suspense>
+        <LoadErrorBoundary what="practice mode">
+          <Suspense fallback={<Loading />}>
+            <Try />
+          </Suspense>
+        </LoadErrorBoundary>
       );
     case "table":
       return <TablePage key={route.id} id={route.id} />;

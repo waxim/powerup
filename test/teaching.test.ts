@@ -5,7 +5,7 @@ import { adviceText } from "../src/client/practice/advice";
 import type { Thought } from "../src/client/practice/bot";
 import { Curriculum } from "../src/client/practice/curriculum";
 import { LocalTable } from "../src/client/practice/localTable";
-import { nextTip, type TipContext } from "../src/client/practice/tips";
+import { GOOD_WHEN, nextTip, type TipContext } from "../src/client/practice/tips";
 import type { Player } from "../src/engine/state";
 import { buildView } from "../src/engine/view";
 import type { TableView } from "../src/shared/protocol";
@@ -157,5 +157,33 @@ describe("repository hygiene", () => {
       }
     };
     walk(new URL("../src", import.meta.url).pathname);
+  });
+});
+
+describe("coach tips, after review", () => {
+  it("say the big blind was posted, not bet, and name the real bettor otherwise", () => {
+    const g = startGame(3, {}, 21, (game) => (game.s.buttonSeat = 0));
+    const ids = seats(g.game);
+    const first = toAct(g.game);
+    const v = buildView(g.game, first, g.clock.now, ALL(ids));
+    const tip = nextTip(v, null, new Set(["welcome", "first-turn"]), ctx())!;
+    expect(tip.id).toBe("facing-bet");
+    expect(tip.text).toMatch(/posted the big blind/);
+    g.game.act(first, "raise", 60, g.clock.now);
+    const next = toAct(g.game);
+    const v2 = buildView(g.game, next, g.clock.now, ALL(ids));
+    const raiser = g.game.player(first).name;
+    expect(nextTip(v2, null, new Set(["welcome", "first-turn"]), ctx())!.text).toMatch(new RegExp(`^${raiser} bet`));
+  });
+
+  it("only mention a power the player still holds, ready to play", () => {
+    const t = new LocalTable(config(), T0, passive);
+    const now = drive(t, T0, { until: (x) => !!x.view(T0).me?.legal, human: () => null });
+    expect(nextTip(t.view(now), null, new Set(["welcome", "first-turn", "facing-bet"]), ctx({ selected: "engineer" }))?.id).not.toBe("select-engineer");
+  });
+
+  it("teach that a flush takes five cards", () => {
+    expect(GOOD_WHEN.deploy).toMatch(/fifth heart/);
+    expect(GOOD_WHEN.engineer).toMatch(/fifth heart/);
   });
 });

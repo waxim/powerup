@@ -58,6 +58,10 @@ export function GameTable({ conn, practice, floating }: Props) {
     setSelectedId(null);
     setReloadPick([]);
   }, [h?.number, h?.street, myTurn]);
+  const onPowerSelect = practice?.onPowerSelect;
+  useEffect(() => {
+    if (!selectedId) onPowerSelect?.(null);
+  }, [selectedId, onPowerSelect]);
 
   const selected = me?.powers.find((p) => p.id === selectedId && p.playable) ?? null;
   const power: PowerSelection = {
@@ -134,7 +138,7 @@ export function GameTable({ conn, practice, floating }: Props) {
         </div>
       )}
       <div className="game-main">
-        <div className={`table-area seats-${ordered.length}`}>
+        <div className={`table-area seats-${ordered.length}${targets ? " is-targeting" : ""}`}>
           <div className={`felt ${h?.empBy ? "is-emp" : ""}`} aria-hidden />
           {ordered.map((p, i) => {
             const geo = seatGeometry(ordered.length, i);

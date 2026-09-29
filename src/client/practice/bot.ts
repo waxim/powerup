@@ -249,7 +249,6 @@ function observe(mem: BotMemory, view: TableView): void {
       boardLength: h.board.length,
       startStack: (self?.chips ?? 0) + (self?.streetBet ?? 0),
     });
-    return;
   }
   if (mem.street !== h.street) {
     mem.street = h.street;
@@ -312,7 +311,7 @@ interface Spot {
 
 const STREETS_LEFT: Record<string, number> = { preflop: 3, flop: 2, turn: 1, river: 0 };
 
-function spotFor(view: TableView, p: Personality, mem: BotMemory, rng: Rng, dice: Rng): Spot | null {
+function spotFor(view: TableView, p: Personality, mem: BotMemory, rng: Rng, dice: Rng, warmup: boolean): Spot | null {
   const h = view.hand;
   const me = view.me;
   if (!h || !me?.legal) return null;
@@ -328,7 +327,7 @@ function spotFor(view: TableView, p: Personality, mem: BotMemory, rng: Rng, dice
     mem,
     rng,
     dice,
-    warmup: view.handNumber <= WARMUP_HANDS,
+    warmup,
     hole: me.hole.map((c) => c.card),
     board,
     opponents: live.map((x) => x.hole.map((c) => c.card)),
@@ -355,8 +354,9 @@ const WARMUP_HANDS = 2;
 type PreflopAction = "raise" | "call-raise" | "limp" | "check";
 
 /** How each player has acted this hand, from the public log (actions since this hand was dealt). */
-export function readActions(view: TableView): { preflop: Map<string, PreflopAction>; bettors: Set<string> } {
+export function readActions(view: TableView): { preflop: Map<string, PreflopAction>; raisers: Set<string>; bettors: Set<string> } {
   const preflop = new Map<string, PreflopAction>();
+  const raisers = new Set<string>();
   const bettors = new Set<string>();
   const log = view.log;
   let start = -1;
@@ -366,7 +366,7 @@ export function readActions(view: TableView): { preflop: Map<string, PreflopActi
       break;
     }
   }
-  if (start < 0) return { preflop, bettors };
+  if (start < 0) return { preflop, raisers, bettors };
   let street = "preflop";
   let raised = false;
   for (let i = start + 1; i < log.length; i++) {
@@ -381,12 +381,13 @@ export function readActions(view: TableView): { preflop: Map<string, PreflopActi
     if (street === "preflop") {
       if (raise) {
         preflop.set(l.playerId, "raise");
+        raisers.add(l.playerId);
         raised = true;
       } else if (/ calls /.test(l.text)) preflop.set(l.playerId, raised ? "call-raise" : "limp");
       else if (/ checks$/.test(l.text)) preflop.set(l.playerId, "check");
     } else if (raise) bettors.add(l.playerId);
   }
-  return { preflop, bettors };
+  return { preflop, raisers, bettors };
 }
 
 const category = (cards: Card[]) => Math.floor(handScore(cards) / 15 ** 5);
@@ -486,7 +487,9 @@ function preflop(s: Spot): BotMove {
   const eq = preflopEquity(a, b, s.n);
   const pos = position(view);
   const highest = view.hand!.currentBet;
-  const raisers = view.players.filter((x) => !x.isYou && x.inHand && /^(Raise|Bet|All-in \d)/.test(x.lastAction ?? "")).length;
+  // Raises from the log: an all-in call also shows as "All-in" on the seat, but it isn't a raise.
+  const raised = readActions(view).raisers;
+  const raisers = view.players.filter((x) => !x.isYou && x.inHand && !x.folded && raised.has(x.id)).length;
   const effBB = s.eff / bb;
   const odds = s.toCall / (s.pot + s.toCall);
 
@@ -514,7 +517,8 @@ function preflop(s: Spot): BotMove {
     const adj = clamp(3 / raiseSize, 0.4, 1.3);
     // No re-raising while the newcomer finds their feet.
     if (below(dice, pct, p.threeBet * adj)) return s.warmup ? call() : threeBet(s, highest, pos);
-    const range = p.callRaise * adj + (pos === "bb" ? p.bbDefend * adj : 0);
+    const inBigBlind = pos === "bb" || (pos === "hu" && view.players.find((x) => x.isYou)!.isBigBlind);
+    const range = p.callRaise * adj + (inBigBlind ? p.bbDefend * adj : 0);
     if (below(dice, pct, range) || (s.toCall <= bb && eq >= odds)) return call();
     return foldOrCheck(s);
   }
@@ -853,7 +857,9 @@ function followUp(view: TableView, mem: BotMemory, rng: Rng): BotMove | null {
       options.map((card) => (w: World) => ({ hole, board: [...board, card, ...w.stream.slice(0, toCome - 1)] })),
       worlds,
     );
-    mem.prefix = [];
+    // The chosen card goes back on top (everyone knows it); the other two are out of play.
+    mem.prefix = [options[index]];
+    mem.dead.push(...options.filter((_, i) => i !== index));
     return { t: "choose", index };
   }
   return null;
@@ -876,6 +882,8 @@ export interface Thought {
 }
 
 interface ThinkOptions {
+  /** Play gently (bots in the first hands; never the coach). */
+  warmup?: boolean;
   /** Budget of hand evaluations per decision. */
   budget?: number;
   /** Always consider powers (the coach), rather than only when in the mood. */
@@ -884,7 +892,7 @@ interface ThinkOptions {
 
 function think(view: TableView, p: Personality, mem: BotMemory, rng: Rng, dice: Rng, opts: ThinkOptions = {}): Thought | null {
   const me = view.me!;
-  const s = spotFor(view, p, mem, rng, dice);
+  const s = spotFor(view, p, mem, rng, dice, opts.warmup ?? view.handNumber <= WARMUP_HANDS);
   if (!s) return null;
 
   // An EMP is only ever played to protect a bet: make that bet now.
@@ -930,6 +938,10 @@ function think(view: TableView, p: Personality, mem: BotMemory, rng: Rng, dice: 
       const idea = ideas[0];
       mem.powersThisStreet++;
       mem.powersThisHand++;
+      // Cards this power sends to the muck are known to be out of play.
+      const m = idea.move;
+      if (m.t === "power" && idea.power.type === "reload") for (const i of m.indices ?? []) mem.dead.push(s.hole[i]);
+      if (m.t === "power" && idea.power.type === "disintegrate" && m.target !== undefined) mem.dead.push(s.board[m.target]);
       if (idea.power.type === "emp") mem.plan = { street: s.street, move: bet };
       return { move: idea.move, power: idea.power.type, equity: e, need, percentile };
     }
@@ -986,7 +998,19 @@ export function advise(view: TableView, memory: BotMemory, rng: Rng): Thought | 
   // The coach's notes are a copy: asking for a hint mustn't change the bots' idea of what happened.
   const mem = { ...memory, prefix: [...memory.prefix], dead: [...memory.dead], seen: new Set(memory.seen) };
   observe(mem, view);
-  return think(view, COACH, mem, rng, MIDPOINT, { budget: 6000, eager: true });
+  return think(view, COACH, mem, rng, MIDPOINT, { budget: 6000, eager: true, warmup: false });
+}
+
+/** Keep the player's notes up to date with what they can see now, for the Hint. */
+export function observePlayer(memory: BotMemory, view: TableView): void {
+  observe(memory, view);
+}
+
+/** Remember whether the player took the lead preflop, so the Hint knows when a continuation bet makes sense. */
+export function notePlayerAction(memory: BotMemory, view: TableView, action: string): void {
+  if (view.hand?.street !== "preflop") return;
+  if (action === "raise") memory.aggressor = true;
+  else if (action === "call") memory.aggressor = false;
 }
 
 /** Keep the player's own notes up to date (what their Scanner showed), for the Hint. */

@@ -119,13 +119,17 @@ export class PracticeRunner {
   };
 
   hold(reason: HoldReason): void {
+    const was = this.clock.held;
     this.clock.hold(reason);
     this.clearTimer();
+    // What the page offers (such as skipping to the next hand) depends on whether the game is held.
+    if (!was) this.publish();
   }
 
   release(reason: HoldReason): void {
+    const was = this.clock.held;
     this.clock.release(reason);
-    this.pump();
+    if (!this.pump() && was && !this.clock.held) this.publish();
   }
 
   /** A fresh game with a new deal (and optionally a new setup). */
@@ -142,7 +146,8 @@ export class PracticeRunner {
   extend(): void {
     this.table.extend(1);
     this.clock.release("ended");
-    this.pump();
+    // Publish even if nothing is due yet (say a rebuy is still waiting), so the summary closes.
+    if (!this.pump()) this.publish();
   }
 
   /** Stop here and show the summary. */
@@ -188,13 +193,15 @@ export class PracticeRunner {
     else this.release("hidden");
   };
 
-  private pump = (): void => {
+  /** Run whatever is due. Returns true if anything happened (and was published). */
+  private pump = (): boolean => {
     this.clock.observe(MAX_GAP_MS);
     if (!this.clock.held && this.table.advance(this.clock.now())) {
       this.afterWork();
-      return;
+      return true;
     }
     this.reschedule();
+    return false;
   };
 
   private afterWork(): void {

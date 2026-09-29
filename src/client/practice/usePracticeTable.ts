@@ -5,7 +5,8 @@ import type { PracticeConfig } from "./localTable";
 import { PracticeRunner, type RunnerEnv, type SessionInfo } from "./runner";
 
 const browserEnv: RunnerEnv = {
-  now: () => Date.now(),
+  // Monotonic, so a system clock change can't stall or rush the game.
+  now: () => performance.timeOrigin + performance.now(),
   setTimeout: (fn, ms) => window.setTimeout(fn, ms),
   clearTimeout: (handle) => window.clearTimeout(handle as number),
   setInterval: (fn, ms) => window.setInterval(fn, ms),

@@ -28,8 +28,8 @@ export interface PracticeControls {
   tips: boolean;
   onToggleTips(): void;
   onCheatSheet(): void;
-  /** Called when the player picks up a power they can play. */
-  onPowerSelect?(type: PowerType): void;
+  /** Called when the player picks up a power they can play, and with null when they put it down. */
+  onPowerSelect?(type: PowerType | null): void;
   onRestart(): void;
   onExit(): void;
 }

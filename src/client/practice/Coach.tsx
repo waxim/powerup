@@ -14,9 +14,12 @@ const GAP_MS = 1500;
 
 const SEEN_KEY = "try:tips";
 
+/** Tips about a particular hand ("New powers" on hand 3) are only remembered for the session. */
+const persistent = (id: string) => !id.startsWith("new-powers-");
+
 export function loadSeenTips(): Set<string> {
   const ids = getJson<unknown>(SEEN_KEY, []);
-  return new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : []);
+  return new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string" && persistent(x)) : []);
 }
 
 export function resetSeenTips(): void {
@@ -78,7 +81,7 @@ export function Coach({ view, handLimit, actions, selected, tried, suppressed = 
   useEffect(() => {
     if (!tip) return;
     seen.current.add(tip.id);
-    setJson(SEEN_KEY, [...seen.current]);
+    setJson(SEEN_KEY, [...seen.current].filter(persistent));
     const timers: ReturnType<typeof setTimeout>[] = [setTimeout(() => setTip(null), SHOW_MS)];
     if (tip.hold !== "none") {
       holdRef.current(true);

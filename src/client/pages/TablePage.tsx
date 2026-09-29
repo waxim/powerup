@@ -7,6 +7,8 @@ import { useTable } from "../lib/useTable";
 import { Lobby } from "./Lobby";
 import { Logo } from "./Home";
 
+const STARTED_TITLE = "▶ Your game started · PowerUp";
+
 export function TablePage({ id }: { id: string }) {
   const conn = useTable(id);
   const { error, clearError } = conn;
@@ -33,14 +35,18 @@ export function TablePage({ id }: { id: string }) {
     lastStatus.current = status;
     if (was !== "lobby" || status !== "running" || !document.hidden) return;
     const title = document.title;
-    document.title = "▶ Your game started · PowerUp";
+    document.title = STARTED_TITLE;
     const onVisible = () => {
       if (document.hidden) return;
       document.title = title;
       document.removeEventListener("visibilitychange", onVisible);
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      // The game moved on (finished, rematch) while the tab was still hidden.
+      if (document.title === STARTED_TITLE) document.title = title;
+    };
   }, [status]);
 
   if (conn.status === "notfound") {

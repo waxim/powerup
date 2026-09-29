@@ -292,3 +292,41 @@ describe("practice table", () => {
     expect(Object.keys(t.stats.powersFaced).length).toBeGreaterThan(0);
   });
 });
+
+describe("practice table, after review", () => {
+  it("counts powers played in a hand the player leaves in the middle of", () => {
+    const t = table({ seed: 11 });
+    const now = drive(t, T0, { until: (x) => !!x.view(T0).me?.legal && x.game.s.handNumber >= 1, human: () => null });
+    const xray = t.view(now).me!.powers.find((p) => p.type === "xray" && p.playable);
+    if (!xray) return;
+    t.send({ t: "power", powerId: xray.id }, now);
+    t.leave();
+    expect(t.stats.powersPlayed.xray).toBe(1);
+  });
+
+  it("undoes a bot's notes when its decided move is dropped (the player paused mid-think)", () => {
+    const marker = 424242;
+    let t!: LocalTable;
+    t = table({}, (view, rng, profile, memory) => {
+      if (memory) memory.startStack = marker;
+      return passive(view, rng, profile, memory);
+    });
+    let now = T0;
+    // Step until some bot has decided (its memory is marked) but not yet moved.
+    for (let i = 0; i < 500; i++) {
+      if (t.bots.some((b) => b.memory.startStack === marker)) break;
+      const v = t.view(now);
+      if (needsHuman(v)) t.send(passive(v, { int: () => 0 }, 0)!, now);
+      else {
+        now = t.nextWakeAt()!;
+        t.advance(now);
+      }
+    }
+    const bot = t.bots.find((b) => b.memory.startStack === marker)!;
+    expect(bot).toBeTruthy();
+    const seq = t.game.s.logSeq;
+    t.send({ t: "pause" }, now);
+    expect(t.game.s.logSeq).toBe(seq + 1);
+    expect(bot.memory.startStack).not.toBe(marker);
+  });
+});

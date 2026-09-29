@@ -196,3 +196,55 @@ describe("practice runner", () => {
     expect(runner.getSnapshot().error).toBeNull();
   });
 });
+
+describe("practice runner, after review", () => {
+  it("'Keep playing' closes the summary even when the player busted on the last hand", () => {
+    for (let seed = 1; seed <= 60; seed++) {
+      const env = new FakeEnv();
+      const runner = new PracticeRunner(config({ opponents: 1, orbits: 1, seed }), env, passive);
+      runner.attach();
+      // Shove every hand; rebuy after the first hand, but not after the last one.
+      for (let i = 0; i < 4000 && !runner.getSnapshot().session.ended; i++) {
+        const v = runner.getSnapshot().view;
+        const l = v.me?.legal;
+        if (v.me?.rebuy && v.handNumber < 2) runner.send({ t: "rebuy", accept: true });
+        else if (l) runner.send(l.canRaise ? { t: "act", action: "raise", amount: l.maxRaiseTo } : { t: "act", action: "call" });
+        else env.advanceBy(250);
+      }
+      const busted = runner.current.game.s.players.find((p) => p.id === runner.current.humanId)!.status === "busted";
+      if (!busted) continue;
+      runner.extend();
+      expect(runner.getSnapshot().session.ended).toBeNull();
+      expect(runner.getSnapshot().view.me?.rebuy).toBeTruthy();
+      runner.send({ t: "rebuy", accept: true });
+      env.advanceBy(3000);
+      expect(runner.current.game.s.handNumber).toBe(3);
+      return;
+    }
+    throw new Error("no seed busted the player on the last hand");
+  });
+
+  it("publishes when a hold is lifted, so the page can offer to skip ahead", () => {
+    const env = new FakeEnv();
+    const runner = new PracticeRunner(config(), env, passive);
+    runner.attach();
+    env.advanceBy(3000);
+    runner.hold("hint");
+    const held = runner.getSnapshot();
+    runner.release("hint");
+    expect(runner.getSnapshot()).not.toBe(held);
+  });
+
+  it("carries on when the system clock is set back", () => {
+    let real = 1_000_000;
+    const c = new VirtualClock(() => real);
+    real += 1000;
+    c.observe(2500);
+    const before = c.now();
+    real -= 120_000;
+    c.observe(2500);
+    real += 1000;
+    c.observe(2500);
+    expect(c.now()).toBe(before + 1000);
+  });
+});

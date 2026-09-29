@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { newBotMemory, pickOpponents, practiceBot, readActions } from "../src/client/practice/bot";
+import { advise, newBotMemory, pickOpponents, practiceBot, readActions } from "../src/client/practice/bot";
 import { LocalTable, type BotMove, type BotPolicy } from "../src/client/practice/localTable";
 import { preflopEquity, preflopPercentile } from "../src/client/practice/preflop";
 import { Game } from "../src/engine/game";
@@ -354,4 +354,66 @@ describe("reading the table log", () => {
     }
     expect(checked).toBeGreaterThan(200);
   }, 60_000);
+});
+
+describe("practice bots and the Hint, after review", () => {
+  it("defend the big blind heads-up", () => {
+    let calls = 0;
+    for (let seed = 1; seed <= 20; seed++) {
+      const ctx = startGame(2, {}, seed);
+      const button = toAct(ctx.game);
+      ctx.game.act(button, "raise", 50, ctx.clock.now);
+      const bb = toAct(ctx.game);
+      rig(ctx.game, { [bb]: ["Jh", "9h"] });
+      givePowers(ctx.game, bb, []);
+      const move = decide(ctx.game, bb, ctx.clock.now, seed);
+      if (move?.t === "act" && move.action !== "fold") calls++;
+    }
+    expect(calls).toBeGreaterThanOrEqual(15);
+  });
+
+  it("don't count an all-in call as a raise", () => {
+    const ctx = startGame(4, { startingChips: 2000 }, 8);
+    const opener = toAct(ctx.game);
+    ctx.game.act(opener, "raise", 60, ctx.clock.now);
+    const short = toAct(ctx.game);
+    ctx.game.player(short).chips = 45;
+    ctx.game.act(short, "call", undefined, ctx.clock.now);
+    const next = toAct(ctx.game);
+    const view = buildView(ctx.game, next, ctx.clock.now, new Set(ctx.game.s.players.map((p) => p.id)));
+    expect([...readActions(view).raisers]).toEqual([opener]);
+  });
+
+  it("Hint: uses the player's own Intel card", () => {
+    const ctx = startGame(2, {}, 3);
+    const ids = seats(ctx.game);
+    const hero = toAct(ctx.game);
+    const villain = ids.find((x) => x !== hero)!;
+    rig(ctx.game, { [hero]: ["Ah", "Kh"], [villain]: ["9s", "9d"] }, ["2h", "7h", "9c", "Qh", "3c"]);
+    givePowers(ctx.game, hero, ["intel"]);
+    for (let i = 0; i < 10 && !(ctx.game.s.hand!.street === "flop" && ctx.game.s.hand!.toAct === hero); i++) {
+      const id = toAct(ctx.game);
+      const l = ctx.game.legal(id)!;
+      ctx.game.act(id, l.canCheck ? "check" : "call", undefined, ctx.clock.now);
+    }
+    ctx.game.playPower(hero, powerId(ctx.game, hero, "intel"), {}, ctx.clock.now);
+    const view = buildView(ctx.game, hero, ctx.clock.now, new Set(ids));
+    expect(view.me!.intelTop).toBe("Qh");
+    const thought = advise(view, newBotMemory(), seededRng(1))!;
+    // The next card completes the ace-high flush: the coach should know it's (almost) a lock.
+    expect(thought.equity).toBeGreaterThan(0.9);
+  });
+
+  it("Hint: no warm-up handicap, so it re-raises aces in the very first hand", () => {
+    const ctx = startGame(3, {}, 4);
+    const opener = toAct(ctx.game);
+    ctx.game.act(opener, "raise", 60, ctx.clock.now);
+    const hero = toAct(ctx.game);
+    rig(ctx.game, { [hero]: ["As", "Ah"] });
+    givePowers(ctx.game, hero, []);
+    const view = buildView(ctx.game, hero, ctx.clock.now, new Set(ctx.game.s.players.map((p) => p.id)));
+    expect(view.handNumber).toBe(1);
+    const thought = advise(view, newBotMemory(), seededRng(1))!;
+    expect(thought.move).toMatchObject({ t: "act", action: "raise" });
+  });
 });

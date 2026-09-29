@@ -164,9 +164,11 @@ function TrySetup({ onStart }: { onStart: (c: PracticeConfig) => void }) {
           </li>
           <li>Runs on your device. Nothing is sent anywhere.</li>
         </ul>
-        <label className="check-field">
-          <input type="checkbox" checked={tips} onChange={(e) => setTips(e.target.checked)} />
-          <span>Show tips as things happen</span>
+        <div className="check-field">
+          <label>
+            <input type="checkbox" checked={tips} onChange={(e) => setTips(e.target.checked)} />
+            <span>Show tips as things happen</span>
+          </label>
           {tips && (
             <button
               type="button"
@@ -180,7 +182,7 @@ function TrySetup({ onStart }: { onStart: (c: PracticeConfig) => void }) {
               {tipsReset ? "Tips reset" : "Show all again"}
             </button>
           )}
-        </label>
+        </div>
         <button className="btn btn-primary btn-big" autoFocus>
           <Play size={20} aria-hidden /> Deal me in
         </button>
@@ -206,8 +208,8 @@ function PracticeGame({ config, onSetup }: { config: PracticeConfig; onSetup: ()
   const [selected, setSelected] = useState<PowerType | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [sheet, setSheet] = useState(false);
-  // Powers tried in earlier sessions, so the summary can point out the new ones.
-  const [triedBefore] = useState(loadTried);
+  // Powers tried in earlier sessions (and earlier games in this one), so the summary can point out the new ones.
+  const triedBefore = useMemo(loadTried, [session.id]);
   const { error, clearError } = conn;
   const v = conn.view!;
   const myTurn = !!v.me?.legal;
@@ -351,7 +353,8 @@ function Summary({
   const you = v.players.find((p) => p.isYou);
   const { stats } = session;
   const net = (you?.chips ?? 0) - session.startingChips * (1 + session.rebuys);
-  const rank = [...v.players].sort((a, b) => b.chips - a.chips).findIndex((p) => p.isYou) + 1;
+  // Ties share the higher place.
+  const rank = 1 + v.players.filter((p) => p.chips > (you?.chips ?? 0)).length;
   const orbits = Math.round(session.handLimit / v.players.length);
   const title =
     session.ended === "out"

@@ -55,6 +55,9 @@ export class VirtualClock {
     const real = this.real();
     const gap = real - this.lastBeat;
     this.lastBeat = real;
-    if (!this.holds.size && gap > maxGapMs) this.offset += gap - maxGapMs;
+    if (this.holds.size) return;
+    if (gap > maxGapMs) this.offset += gap - maxGapMs;
+    // The system clock was set back: carry on from here rather than wait for it to catch up.
+    else if (gap < 0) this.offset += gap;
   }
 }

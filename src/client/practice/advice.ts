@@ -67,7 +67,11 @@ export function adviceText(t: Thought, v: TableView): string {
     case "fold":
       return `You win about ${eq} here. Calling ${chips(l.callAmount)} into ${chips(l.pot)} needs ${pct(t.need)}, so folding is fine.`;
     case "call":
-      return `About ${eq}. You need ${pct(t.need)} to call ${chips(l.callAmount)}, so calling is fine.`;
+      if (t.equity >= t.need) return `About ${eq}. You need ${pct(t.need)} to call ${chips(l.callAmount)}, so calling is fine.`;
+      // Calling a little short of the odds: a small bet, or a hand that can win more later if it improves.
+      return `About ${eq}, a bit short of the ${pct(t.need)} a call needs, but ${
+        l.callAmount <= l.pot * 0.25 ? "the bet is small" : "a hand like this can win more later if it improves"
+      }, so a call is OK.`;
     case "check":
       return `About ${eq}. Nothing to pay, so check and see what comes.`;
     case "raise":

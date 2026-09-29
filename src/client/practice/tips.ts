@@ -36,11 +36,11 @@ export const GOOD_WHEN: Record<PowerType, string> = {
   scanner: "you're drawing and want to bin a card that helps them.",
   reload: "your cards are weak, or one is face up.",
   intel: "it's early in the hand; it makes Deploy and Disintegrate predictable.",
-  engineer: "you need one particular card, like a fourth heart.",
+  engineer: "you need one particular card, like a fifth heart for a flush.",
   emp: "you're ahead and opponents still have energy.",
   disintegrate: "a card just dealt helps an opponent more than you.",
   clone: "someone just played a strong power.",
-  deploy: "you need one more card, like a fourth heart for a flush.",
+  deploy: "you need one more card, like a fifth heart to complete a flush.",
 };
 
 type Rule = (v: TableView, prev: TableView | null, ctx: TipContext) => Tip | null;
@@ -61,8 +61,12 @@ function botPowerTip(v: TableView, l: LogEntry): Tip | null {
   const type = l.power!;
   const name = nameOf(v, l.playerId);
   const c = cardsIn(l.text);
+  const you = v.players.find((p) => p.isYou);
+  const youShown = !!you?.inHand && !you.folded && !!v.me?.hole.some((c) => c.exposed);
   const text: Record<PowerType, string> = {
-    xray: `${name} played X-Ray: everyone still in the hand, you included, now shows one card.`,
+    xray: youShown
+      ? `${name} played X-Ray: everyone still in the hand, you included, now shows one card.`
+      : `${name} played X-Ray: each opponent still in the hand now shows one card.`,
     upgrade: `${name} played Upgrade: a third hole card, then one thrown away. Nobody sees which.`,
     scanner: `${name} peeked at the next two cards with Scanner, and may throw one away.`,
     reload: `${name} swapped ${/ both /.test(l.text) ? "both" : "one"} of their cards with Reload.`,
@@ -96,9 +100,10 @@ const RULES: Rule[] = [
           hold: "none",
         }
       : null,
-  (_v, _p, ctx) => {
+  (v, _p, ctx) => {
     const t = ctx.selected;
-    if (!t) return null;
+    // Only while the player is still holding it, ready to play.
+    if (!t || !v.me?.powers.some((p) => p.type === t && p.playable)) return null;
     const def = POWERS[t];
     return { id: `select-${t}`, text: `${def.name}: ${def.rules} Good when ${GOOD_WHEN[t]}`, hold: "turn", until: (v) => !myTurn(v) };
   },
@@ -114,11 +119,16 @@ const RULES: Rule[] = [
       : null,
   (v) => {
     const l = v.me?.legal;
-    if (!l || l.callAmount === 0) return null;
-    const bettor = v.players.filter((p) => !p.isYou && p.streetBet > 0).sort((a, b) => b.streetBet - a.streetBet)[0];
+    const h = v.hand;
+    if (!l || !h || l.callAmount === 0) return null;
+    // Preflop with no raise, the "bet" is just the big blind.
+    const blindOnly = h.street === "preflop" && h.currentBet <= v.level.bb;
+    const bigBlind = v.players.find((p) => p.isBigBlind);
+    const lastBet = [...v.log].reverse().find((x) => x.kind === "action" && / (bets|raises to) /.test(x.text) && x.playerId !== v.youId);
+    const who = blindOnly ? `${bigBlind?.name ?? "The big blind"} posted the big blind` : `${nameOf(v, lastBet?.playerId)} bet`;
     return {
       id: "facing-bet",
-      text: `${bettor?.name ?? "Someone"} bet. Call matches it (${l.callAmount}), Raise bets more, Fold gives up the hand. You can only Check when nobody has bet.`,
+      text: `${who}. Call matches it (${l.callAmount} more), Raise bets more, Fold gives up the hand. You can only Check when nobody has bet.`,
       hold: "turn",
       target: "actions",
       until: (x) => !myTurn(x),
@@ -143,7 +153,7 @@ const RULES: Rule[] = [
     return v.hand?.street === "flop" && you?.inHand && !you.folded && v.me?.handLabel
       ? {
           id: "flop",
-          text: `The flop: three shared cards. Your best hand shows under your cards: ${v.me.handLabel}.`,
+          text: `The flop: three shared cards. Your best hand shows next to your cards: ${v.me.handLabel}.`,
           hold: "none",
           target: "hand-label",
         }
@@ -167,10 +177,10 @@ const RULES: Rule[] = [
       : null;
   },
   (v) =>
-    myTurn(v) && v.me!.energy >= v.rules.maxEnergy - 1 && v.me!.powers.some((p) => p.playable)
+    myTurn(v) && v.me!.energy + v.rules.energyPerHand > v.rules.maxEnergy && v.me!.powers.some((p) => p.playable)
       ? {
           id: "energy-full",
-          text: `Your energy is nearly full. Next hand's +${v.rules.energyPerHand} would be wasted, so use a power.`,
+          text: `Your energy is nearly full: next hand's +${v.rules.energyPerHand} would go over the ${v.rules.maxEnergy} cap. Spend some on a power.`,
           hold: "turn",
           target: "energy",
           until: (x) => !myTurn(x),

@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { applyPlayerMessage, isPlayerMessage } from "../engine/dispatch";
 import { Game, GameError } from "../engine/game";
 import { cryptoRng } from "../engine/rng";
 import type { TableState } from "../engine/state";
@@ -155,43 +156,11 @@ export class PowerUpTable extends DurableObject<Env> {
         }
         return;
       }
-      case "start":
-        game.start(pid, now);
-        return;
-      case "act":
-        game.act(pid, msg.action, typeof msg.amount === "number" ? msg.amount : undefined, now);
-        return;
-      case "power":
-        game.playPower(
-          pid,
-          String(msg.powerId),
-          {
-            target: typeof msg.target === "number" ? msg.target : undefined,
-            indices: Array.isArray(msg.indices) ? msg.indices.filter((i) => typeof i === "number") : undefined,
-          },
-          now,
-        );
-        return;
-      case "choose":
-        game.choose(pid, typeof msg.index === "number" ? msg.index : null, now);
-        return;
-      case "rebuy":
-        game.rebuy(pid, msg.accept === true, now);
-        return;
-      case "back":
-        game.setBack(pid, now);
-        return;
-      case "pause":
-        game.pause(pid, now);
-        return;
-      case "resume":
-        game.resume(pid, now, { hostAbsent: !this.connectedPlayers(game).has(game.s.hostId) });
-        return;
-      case "rematch":
-        game.rematch(pid, now);
-        return;
       default:
-        throw new GameError("Unknown request");
+        if (!isPlayerMessage(msg)) throw new GameError("Unknown request");
+        // Anyone seated may lift a pause whose host has gone.
+        const hostAbsent = msg.t === "resume" && !this.connectedPlayers(game).has(game.s.hostId);
+        applyPlayerMessage(game, pid, msg, now, { hostAbsent });
     }
   }
 

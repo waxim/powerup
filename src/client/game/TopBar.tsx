@@ -1,6 +1,7 @@
 import {
   BookOpen,
   Check,
+  Lightbulb,
   Link,
   LogOut,
   Menu,
@@ -20,6 +21,10 @@ import { getSeatToken } from "../lib/storage";
 import { Logo } from "../pages/Home";
 
 export interface PracticeControls {
+  /** e.g. "hand 3 of 9" */
+  progress: string;
+  tips: boolean;
+  onToggleTips(): void;
   onRestart(): void;
   onExit(): void;
 }
@@ -67,7 +72,14 @@ export function TopBar({ view, send, serverNow, fourColor, setFourColor, sound, 
 
   return (
     <header className="topbar">
-      <Logo small />
+      {practice ? (
+        <span className="practice-pill" title="Practice game against bots">
+          <span>Practice</span>
+          {practice.progress}
+        </span>
+      ) : (
+        <Logo small />
+      )}
       <div className="level" title="Blind level">
         <span className="level-blinds">
           {chips(view.level.sb)}/{chips(view.level.bb)}
@@ -88,13 +100,16 @@ export function TopBar({ view, send, serverNow, fourColor, setFourColor, sound, 
         {open && (
           <div className="menu" role="menu">
             <div className="menu-info">
-              {practice ? "Practice vs bots" : view.settings.name || "PowerUp table"} · hand #{view.handNumber} ·{" "}
+              {practice ? `Practice vs bots · ${practice.progress}` : `${view.settings.name || "PowerUp table"} · hand #${view.handNumber}`} ·{" "}
               {view.mode === "double" ? "Double game" : "Classic"}
             </div>
             {practice && (
               <>
-                <button type="button" role="menuitem" onClick={practice.onRestart}>
+                <button type="button" role="menuitem" onClick={() => (setOpen(false), practice.onRestart())}>
                   <RotateCcw size={18} /> Start over
+                </button>
+                <button type="button" role="menuitem" onClick={() => (setOpen(false), practice.onToggleTips())}>
+                  <Lightbulb size={18} /> {practice.tips ? "Turn tips off" : "Turn tips on"}
                 </button>
                 <button type="button" role="menuitem" onClick={practice.onExit}>
                   <LogOut size={18} /> Leave practice

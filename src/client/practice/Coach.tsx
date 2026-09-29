@@ -1,116 +1,94 @@
 import { Lightbulb, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { POWERS } from "../../shared/powers";
+import { useEffect, useRef, useState } from "react";
 import type { TableView } from "../../shared/protocol";
-import { getPref, setPref } from "../lib/storage";
+import { getJson, setJson } from "../lib/storage";
+import { nextTip, type Tip } from "./coach";
 
-interface Tip {
-  id: string;
-  /** Returns the tip text when it applies to the current view, otherwise null. */
-  when: (view: TableView, ctx: CoachContext) => string | null;
+/** The game waits this long while you read a new tip... */
+const HOLD_MS = 5000;
+/** ...and the tip stays up this long unless you dismiss it or act. */
+const SHOW_MS = 11_000;
+/** Breathing room between two tips. */
+const GAP_MS = 1500;
+
+const SEEN_KEY = "try:tips";
+
+export function loadSeenTips(): Set<string> {
+  const ids = getJson<unknown>(SEEN_KEY, []);
+  return new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : []);
 }
 
-interface CoachContext {
-  /** Name and power of the most recent power an opponent played. */
-  lastOpponentPower: { name: string; power: string } | null;
+export function resetSeenTips(): void {
+  setJson(SEEN_KEY, null);
 }
 
-/** Tips appear once each, in the moment they're relevant. */
-const TIPS: Tip[] = [
-  {
-    id: "welcome",
-    when: (v) => `Hold'em with powers! Yours sit under your cards; the gold number is each one's energy cost (you have ${v.me?.energy ?? 10}).`,
-  },
-  {
-    id: "your-turn",
-    when: (v) => (v.me?.legal && v.me.powers.some((p) => p.playable) ? "Your turn: tap a glowing power to use it before you bet, or just bet." : null),
-  },
-  {
-    id: "opponent-power",
-    when: (_v, ctx) =>
-      ctx.lastOpponentPower ? `${ctx.lastOpponentPower.name} played ${ctx.lastOpponentPower.power}. Every power is announced to the whole table.` : null,
-  },
-  {
-    id: "exposed",
-    when: (v) => (v.me?.hole.some((c) => c.exposed) ? "You were X-Rayed: one of your cards is face up for everyone. Reload can swap it." : null),
-  },
-  {
-    id: "energy",
-    when: (v) => (v.handNumber >= 2 ? `+${v.rules.energyPerHand} energy every hand, up to ${v.rules.maxEnergy}. Save up for the 5-cost powers.` : null),
-  },
-  {
-    id: "emp",
-    when: (v) => (v.hand?.empBy && v.hand.empBy !== v.youId ? "EMP! Your powers are offline until the next card is dealt." : null),
-  },
-  {
-    id: "intel",
-    when: (v) => (v.me?.intelTop ? "Intel: only you can see the top card of the deck, for the rest of the hand." : null),
-  },
-  {
-    id: "engineered",
-    when: (v) => (v.hand?.knownTop ? "The \"next card\" was chosen with Engineer: everyone knows it's coming." : null),
-  },
-  {
-    id: "deployed",
-    when: (v) => (v.hand?.board.some((b) => b.deployed) ? "The +1 card was Deployed: an extra community card for everyone." : null),
-  },
-  {
-    id: "shield",
-    when: (v) => (v.hand?.board.some((b) => b.locked) ? "Red cards are shielded: someone's all-in, so powers can't touch them." : null),
-  },
-  {
-    id: "refill",
-    when: (v) => (v.handNumber >= 3 ? `Used powers are replaced next hand, so you always start with ${v.rules.handSize}.` : null),
-  },
-];
+interface Props {
+  view: TableView;
+  handLimit: number;
+  /** Changes whenever the player sends something: acting dismisses the tip. */
+  actions: number;
+  /** Stop or restart the game clock while a tip is being read. */
+  onHold(holding: boolean): void;
+  onDisable(): void;
+}
 
-const SHOW_MS = 12_000;
+/** One short tip at a time, each shown once, when what it explains happens at the table. */
+export function Coach({ view, handLimit, actions, onHold, onDisable }: Props) {
+  const [tip, setTip] = useState<Tip | null>(null);
+  const [quiet, setQuiet] = useState(false);
+  const seen = useRef<Set<string>>(loadSeenTips());
+  // The last view looked at while no tip was up, so events during a tip aren't missed.
+  const prev = useRef<TableView | null>(null);
+  const holdRef = useRef(onHold);
+  holdRef.current = onHold;
 
-export function Coach({ view }: { view: TableView }) {
-  const [enabled, setEnabled] = useState(() => getPref("coach", true));
-  const [seen, setSeen] = useState<Set<string>>(() => new Set());
-  const [current, setCurrent] = useState<{ id: string; text: string } | null>(null);
-  const shownAt = useRef(0);
-
-  const ctx = useMemo<CoachContext>(() => {
-    const entry = [...view.log].reverse().find((l) => l.kind === "power" && l.power && l.playerId && l.playerId !== view.youId && / plays /.test(l.text));
-    const name = entry ? view.players.find((p) => p.id === entry.playerId)?.name : null;
-    return { lastOpponentPower: entry && name ? { name, power: POWERS[entry.power!].name } : null };
-  }, [view.log, view.players, view.youId]);
-
-  // Pick the first unseen tip that applies; keep each on screen for a while before moving on.
   useEffect(() => {
-    if (!enabled) return;
-    if (current && Date.now() - shownAt.current < SHOW_MS) return;
-    const next = TIPS.find((t) => !seen.has(t.id) && t.when(view, ctx));
-    if (next && next.id !== current?.id) {
-      setCurrent({ id: next.id, text: next.when(view, ctx)! });
-      setSeen((s) => new Set(s).add(next.id));
-      shownAt.current = Date.now();
-    } else if (!next && current && Date.now() - shownAt.current >= SHOW_MS) {
-      setCurrent(null);
-    }
-  }, [view, ctx, enabled, seen, current]);
+    if (tip || quiet) return;
+    const next = nextTip(view, prev.current, seen.current, { handLimit });
+    // Only move on once nothing is left to say, so two things happening together both get a tip.
+    if (next) setTip(next);
+    else prev.current = view;
+  }, [view, tip, quiet, handLimit]);
 
-  if (!enabled) return null;
-  if (!current) return null;
+  // Hold the game while a new tip is read, then let it carry on; hide the tip after a while.
+  useEffect(() => {
+    if (!tip) return;
+    seen.current.add(tip.id);
+    setJson(SEEN_KEY, [...seen.current]);
+    holdRef.current(true);
+    const release = setTimeout(() => holdRef.current(false), HOLD_MS);
+    const hide = setTimeout(() => setTip(null), SHOW_MS);
+    return () => {
+      clearTimeout(release);
+      clearTimeout(hide);
+      holdRef.current(false);
+      setQuiet(true);
+    };
+  }, [tip]);
+
+  useEffect(() => {
+    if (!quiet) return;
+    const t = setTimeout(() => setQuiet(false), GAP_MS);
+    return () => clearTimeout(t);
+  }, [quiet]);
+
+  // Acting means you've moved on.
+  const lastActions = useRef(actions);
+  useEffect(() => {
+    if (actions === lastActions.current) return;
+    lastActions.current = actions;
+    setTip(null);
+  }, [actions]);
+
+  if (!tip) return null;
   return (
     <div className="coach" role="status" aria-live="polite">
       <Lightbulb size={18} className="coach-icon" aria-hidden />
-      <span className="coach-text">{current.text}</span>
-      <button type="button" className="coach-next" onClick={() => setCurrent(null)}>
+      <span className="coach-text">{tip.text}</span>
+      <button type="button" className="coach-next" onClick={() => setTip(null)}>
         Got it
       </button>
-      <button
-        type="button"
-        className="coach-off"
-        aria-label="Turn tips off"
-        title="Turn tips off"
-        onClick={() => {
-          setPref("coach", false);
-          setEnabled(false);
-        }}
-      >
+      <button type="button" className="coach-off" aria-label="Turn tips off" title="Turn tips off" onClick={onDisable}>
         <X size={16} />
       </button>
     </div>

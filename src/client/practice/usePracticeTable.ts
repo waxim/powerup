@@ -1,42 +1,34 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { cryptoRng } from "../../engine/rng";
-import type { ClientMessage, TableView } from "../../shared/protocol";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { TableConnection } from "../lib/useTable";
 import { practiceBot } from "./bot";
-import { LocalTable, type PracticeOptions } from "./localTable";
+import type { PracticeConfig } from "./localTable";
+import { PracticeRunner, type RunnerEnv, type SessionInfo } from "./runner";
 
-const browserClock = {
+const browserEnv: RunnerEnv = {
   now: () => Date.now(),
-  setTimeout: (fn: () => void, ms: number) => window.setTimeout(fn, ms),
-  clearTimeout: (handle: unknown) => window.clearTimeout(handle as number),
+  setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+  clearTimeout: (handle) => window.clearTimeout(handle as number),
+  setInterval: (fn, ms) => window.setInterval(fn, ms),
+  clearInterval: (handle) => window.clearInterval(handle as number),
+  doc: document,
 };
 
-/**
- * A TableConnection backed by a LocalTable in this tab, so the regular table UI can render a practice game.
- * `key` restarts the game when it changes.
- */
-export function usePracticeTable(options: PracticeOptions, key: number): TableConnection {
-  const [view, setView] = useState<TableView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const tableRef = useRef<LocalTable | null>(null);
-  const optionsRef = useRef(options);
-  optionsRef.current = options;
-
-  useEffect(() => {
-    const table = new LocalTable(optionsRef.current, cryptoRng, practiceBot, browserClock, setView, setError);
-    tableRef.current = table;
-    const onVisibility = () => table.setHidden(document.visibilityState === "hidden");
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      table.dispose();
-      tableRef.current = null;
-    };
-  }, [key]);
-
-  const send = useCallback((msg: ClientMessage) => tableRef.current?.send(msg), []);
-  const clearError = useCallback(() => setError(null), []);
-  const serverNow = useCallback(() => Date.now(), []);
-
-  return { view, status: "open", error, clearError, send, serverNow };
+/** A practice game in this tab, exposed as the same TableConnection a real table uses. */
+export function usePracticeTable(config: PracticeConfig): { conn: TableConnection; session: SessionInfo; runner: PracticeRunner } {
+  // Built once, without side effects; it only starts running when attached.
+  const [runner] = useState(() => new PracticeRunner(config, browserEnv, practiceBot));
+  useEffect(() => runner.attach(), [runner]);
+  const snap = useSyncExternalStore(runner.subscribe, runner.getSnapshot);
+  const conn = useMemo<TableConnection>(
+    () => ({
+      view: snap.view,
+      status: "open",
+      error: snap.error,
+      clearError: runner.clearError,
+      send: runner.send,
+      serverNow: runner.serverNow,
+    }),
+    [snap, runner],
+  );
+  return { conn, session: snap.session, runner };
 }

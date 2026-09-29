@@ -1,8 +1,11 @@
+import { applyPlayerMessage, isPlayerMessage } from "../../engine/dispatch";
 import { Game, GameError } from "../../engine/game";
-import type { Rng } from "../../engine/rng";
+import { seededRng, type Rng } from "../../engine/rng";
 import { buildView } from "../../engine/view";
+import type { PowerType } from "../../shared/powers";
 import type { ClientMessage, TableView } from "../../shared/protocol";
-import type { TableSettings } from "../../shared/settings";
+import { UNLIMITED_REBUYS, cleanName } from "../../shared/settings";
+import { newBotMemory, pickOpponents, type BotMemory } from "./bot";
 
 /** What a bot wants to do next. Mirrors the client messages a human would send. */
 export type BotMove =
@@ -11,212 +14,293 @@ export type BotMove =
   | { t: "choose"; index: number | null }
   | { t: "rebuy"; accept: boolean };
 
-/** A bot decides from its own view of the table only, so it can never see hidden cards. */
-export type BotPolicy = (view: TableView, rng: Rng, botIndex: number) => BotMove | null;
+/**
+ * A bot decides from its own view of the table only (a private copy), so it can never see hidden cards.
+ * `profile` picks its personality; `memory` is its own notes from earlier decisions.
+ */
+export type BotPolicy = (view: TableView, rng: Rng, profile: number, memory?: BotMemory) => BotMove | null;
 
-export interface Scheduler {
-  now(): number;
-  setTimeout(fn: () => void, ms: number): unknown;
-  clearTimeout(handle: unknown): void;
-}
-
-export interface PracticeOptions {
+export interface PracticeConfig {
   name: string;
-  botNames: string[];
-  settings: Partial<TableSettings>;
-  /** Milliseconds a bot "thinks" before acting: [min, max]. */
-  thinkMs?: [number, number];
+  /** 1 to 5 computer players. */
+  opponents: number;
+  /** The session ends after this many orbits (one orbit = one hand per player). */
+  orbits: number;
+  /** Seeds the deck and the bots, so a session can be replayed. */
+  seed: number;
+  startingChips?: number;
+  startingSmallBlind?: number;
+  levelMinutes?: number;
+  turnSeconds?: number;
 }
 
-const DEFAULT_THINK: [number, number] = [700, 1500];
+export const PRACTICE_DEFAULTS = {
+  startingChips: 1000,
+  startingSmallBlind: 10,
+  levelMinutes: 3,
+  turnSeconds: 90,
+} as const;
+
+export type SessionEnd = "orbits" | "out" | "finished";
+
+/** What the human did this session, for the summary. Recorded as hands finish (the log is truncated). */
+export interface PracticeStats {
+  hands: number;
+  handsWon: number;
+  biggestWin: number;
+  powersPlayed: Partial<Record<PowerType, number>>;
+  powersFaced: Partial<Record<PowerType, number>>;
+}
+
+interface BotSeat {
+  id: string;
+  name: string;
+  profile: number;
+  memory: BotMemory;
+}
+
+type BotTask = { id: string; kind: "turn" | "choice" | "rebuy" };
 
 /**
- * A complete table running in the browser: the real game engine, the human's seat, and bot seats.
- * It produces the same TableView a real table would, so the normal table UI renders it unchanged,
- * and it never touches the server.
+ * A complete table running in the browser: the real game engine, the human's seat and the bot seats.
+ * It produces the same TableView a real table would, so the normal table UI renders it unchanged, and it
+ * never touches the server.
+ *
+ * It keeps no timers of its own: the caller passes the time in and asks `nextWakeAt()` when to come back.
+ * `advance()` then runs every due event one at a time, each at its own timestamp, so a late wake-up replays
+ * events in order instead of collapsing them.
  */
 export class LocalTable {
   readonly game: Game;
   readonly humanId: string;
-  readonly botIds: string[];
-  private wakeTimer: unknown = null;
-  private botTimer: unknown = null;
-  private disposed = false;
-  private readonly think: [number, number];
+  readonly bots: readonly BotSeat[];
+  readonly stats: PracticeStats = { hands: 0, handsWon: 0, biggestWin: 0, powersPlayed: {}, powersFaced: {} };
+  handLimit: number;
+  ended: SessionEnd | null = null;
+  /** Bot moves the engine rejected (a bot bug); tests require this to stay 0. */
+  fallbacks = 0;
+
+  private readonly botRng: Rng;
+  private readonly allIds: Set<string>;
+  private botDue: (BotTask & { at: number; seq: number }) | null = null;
+  /** Bots whose last move was a power, so their next move waits until the announcement has been read. */
+  private readonly afterPower = new Set<string>();
+  private recordedHand = 0;
 
   constructor(
-    opts: PracticeOptions,
-    private readonly rng: Rng,
+    readonly config: PracticeConfig,
+    now: number,
     private readonly policy: BotPolicy,
-    private readonly clock: Scheduler,
-    private readonly onChange: (view: TableView) => void,
-    private readonly onError: (message: string) => void = () => {},
   ) {
-    const now = clock.now();
-    const { game, host } = Game.create({ id: "practice", settings: opts.settings, hostName: opts.name, now, rng });
+    const opponents = Math.min(5, Math.max(1, Math.round(config.opponents)));
+    const name = cleanName(config.name) || "Player";
+    const { game, host } = Game.create({
+      id: "practice",
+      settings: {
+        name: "Practice",
+        maxSeats: opponents + 1,
+        startingChips: config.startingChips ?? PRACTICE_DEFAULTS.startingChips,
+        startingSmallBlind: config.startingSmallBlind ?? PRACTICE_DEFAULTS.startingSmallBlind,
+        levelMinutes: config.levelMinutes ?? PRACTICE_DEFAULTS.levelMinutes,
+        turnSeconds: config.turnSeconds ?? PRACTICE_DEFAULTS.turnSeconds,
+        rebuys: UNLIMITED_REBUYS,
+      },
+      hostName: name,
+      now,
+      rng: seededRng(config.seed),
+    });
     this.game = game;
     this.humanId = host.id;
-    this.botIds = opts.botNames.map((name) => game.join(name, now).id);
-    this.think = opts.thinkMs ?? DEFAULT_THINK;
+    this.bots = pickOpponents(host.name, opponents).map((b) => ({ ...b, id: game.join(b.name, now).id, memory: newBotMemory() }));
+    this.allIds = new Set(game.s.players.map((p) => p.id));
+    this.botRng = seededRng(config.seed ^ 0x5bd1e995);
+    this.handLimit = Math.max(1, config.orbits) * game.s.players.length;
     game.start(host.id, now);
-    this.update();
+    this.afterChange(now);
   }
 
-  get view(): TableView {
-    const now = this.clock.now();
-    return buildView(this.game, this.humanId, now, new Set(this.game.s.players.map((p) => p.id)));
+  view(now: number): TableView {
+    return buildView(this.game, this.humanId, now, this.allIds);
   }
 
-  /** Apply a message from the human player, exactly as the Durable Object would. */
-  send(msg: ClientMessage): void {
-    if (this.disposed) return;
-    const now = this.clock.now();
-    this.game.tick(now);
-    const id = this.humanId;
+  /** Apply a message from the human player, exactly as a real table would. Throws GameError if it's refused. */
+  send(msg: ClientMessage, now: number): void {
+    this.advance(now);
+    if (this.ended) throw new GameError("This practice session is over");
+    if (!isPlayerMessage(msg) || msg.t === "start" || msg.t === "rematch") throw new GameError("Not available in practice");
+    const before = structuredClone(this.game.s);
     try {
-      switch (msg.t) {
-        case "act":
-          this.game.act(id, msg.action, msg.amount, now);
-          break;
-        case "power":
-          this.game.playPower(id, msg.powerId, { target: msg.target, indices: msg.indices }, now);
-          break;
-        case "choose":
-          this.game.choose(id, msg.index, now);
-          break;
-        case "rebuy":
-          this.game.rebuy(id, msg.accept, now);
-          break;
-        case "back":
-          this.game.setBack(id, now);
-          break;
-        case "pause":
-          this.game.pause(id, now);
-          break;
-        case "resume":
-          this.game.resume(id, now);
-          break;
-        default:
-          // Lobby messages (join, start, kick, rematch...) don't apply to a practice table.
-          break;
-      }
+      applyPlayerMessage(this.game, this.humanId, msg, now);
     } catch (err) {
-      if (err instanceof GameError) this.onError(err.message);
-      else throw err;
+      // Roll back anything a refused move half-did, as the server does.
+      this.game.s = before;
+      throw err;
     }
-    this.update();
+    this.afterChange(now);
   }
 
-  /** Pause while the tab is hidden so the clock doesn't run out on the human. */
-  setHidden(hidden: boolean): void {
+  /** Run everything due up to `now`, in time order. Returns true if anything happened. */
+  advance(now: number): boolean {
+    let changed = false;
+    for (let guard = 0; guard < 1000 && !this.ended; guard++) {
+      const end = this.sessionEndAt();
+      const engine = this.game.nextWakeAt();
+      const bot = this.botDue?.at ?? null;
+      const t = minOf(end, engine, bot);
+      if (t === null || t > now) break;
+      changed = true;
+      if (end !== null && end <= t) {
+        this.ended = "orbits";
+        this.botDue = null;
+        break;
+      }
+      // Bots go first on a tie, so a timer never beats a bot that was already due.
+      if (bot !== null && bot <= t) this.runBot(t);
+      else this.game.tick(t);
+      this.afterChange(t);
+    }
+    return changed;
+  }
+
+  /** When `advance` next has something to do, or null if nothing will happen until the human acts. */
+  nextWakeAt(): number | null {
+    if (this.ended) return null;
+    return minOf(this.sessionEndAt(), this.game.nextWakeAt(), this.botDue?.at ?? null);
+  }
+
+  /** Carry on for more orbits after the session ended. */
+  extend(orbits = 1): void {
+    if (this.ended !== "orbits") return;
+    this.handLimit += orbits * this.game.s.players.length;
+    this.ended = null;
+  }
+
+  /** The last hand ends the session when its result has been shown, i.e. when the next hand would be dealt. */
+  private sessionEndAt(): number | null {
     const s = this.game.s;
-    if (s.status !== "running") return;
-    const now = this.clock.now();
-    if (hidden && !s.paused) this.game.pause(this.humanId, now);
-    else if (!hidden && s.paused) this.game.resume(this.humanId, now);
-    this.update();
+    if (s.status !== "running" || s.paused || s.handNumber < this.handLimit) return null;
+    if (s.hand && s.hand.phase !== "done") return null;
+    return s.nextHandAt;
   }
 
-  dispose(): void {
-    this.disposed = true;
-    if (this.wakeTimer !== null) this.clock.clearTimeout(this.wakeTimer);
-    if (this.botTimer !== null) this.clock.clearTimeout(this.botTimer);
-  }
-
-  /** Run due timers, publish the new view, and schedule the next timer and bot move. */
-  private update(): void {
-    if (this.disposed) return;
-    const now = this.clock.now();
-    this.game.tick(now);
-    this.onChange(this.view);
-    this.schedule();
-  }
-
-  private schedule(): void {
-    if (this.wakeTimer !== null) this.clock.clearTimeout(this.wakeTimer);
-    if (this.botTimer !== null) this.clock.clearTimeout(this.botTimer);
-    this.wakeTimer = null;
-    this.botTimer = null;
-    const wake = this.game.nextWakeAt();
-    if (wake !== null) {
-      this.wakeTimer = this.clock.setTimeout(() => {
-        this.wakeTimer = null;
-        this.update();
-      }, Math.max(0, wake - this.clock.now()));
+  private afterChange(now: number): void {
+    const s = this.game.s;
+    this.recordHand();
+    const human = s.players.find((p) => p.id === this.humanId);
+    if (human?.status === "out") this.ended = "out";
+    else if (s.status === "finished") this.ended = "finished";
+    if (this.ended) {
+      this.botDue = null;
+      return;
     }
-    const bot = this.botToMove();
-    if (bot) {
-      const [min, max] = this.think;
-      // Quick follow-up choices (Scanner, Upgrade, Engineer) and rebuys don't need a long pause.
-      const quick = bot.kind !== "turn";
-      const delay = quick ? Math.min(min, 600) : min + this.rng.int(Math.max(1, max - min));
-      this.botTimer = this.clock.setTimeout(() => {
-        this.botTimer = null;
-        this.moveBot(bot.id);
-      }, delay);
+    const task = this.botTask();
+    if (!task) {
+      this.botDue = null;
+      return;
     }
+    // Keep the bot's thinking time running unless something happened since it started thinking.
+    const due = this.botDue;
+    if (due && due.id === task.id && due.kind === task.kind && due.seq === s.logSeq) return;
+    this.botDue = { ...task, at: now + this.thinkMs(task), seq: s.logSeq };
   }
 
-  private botToMove(): { id: string; kind: "turn" | "choice" | "rebuy" } | null {
+  private botTask(): BotTask | null {
     const s = this.game.s;
     if (s.status !== "running" || s.paused) return null;
-    for (const id of this.botIds) {
-      const p = s.players.find((x) => x.id === id);
-      if (p?.status === "busted" && !p.rebuyDeclined) return { id, kind: "rebuy" };
+    for (const b of this.bots) {
+      const p = s.players.find((x) => x.id === b.id);
+      if (p?.status === "busted" && !p.rebuyDeclined) return { id: b.id, kind: "rebuy" };
     }
     const h = s.hand;
     if (!h || h.phase !== "betting") return null;
-    if (h.pending && this.botIds.includes(h.pending.playerId)) return { id: h.pending.playerId, kind: "choice" };
-    if (!h.pending && h.toAct && this.botIds.includes(h.toAct)) return { id: h.toAct, kind: "turn" };
+    if (h.pending) return this.isBot(h.pending.playerId) ? { id: h.pending.playerId, kind: "choice" } : null;
+    if (h.toAct && this.isBot(h.toAct)) return { id: h.toAct, kind: "turn" };
     return null;
   }
 
-  private moveBot(id: string): void {
-    if (this.disposed) return;
-    const now = this.clock.now();
-    this.game.tick(now);
-    const view = buildView(this.game, id, now, new Set(this.game.s.players.map((p) => p.id)));
-    const move = this.policy(view, this.rng, this.botIds.indexOf(id));
-    try {
-      if (move) this.applyBotMove(id, move, now);
-    } catch (err) {
-      if (!(err instanceof GameError)) throw err;
-      // A policy mistake must never stall the table: fall back to the simplest legal action.
-      console.warn(`practice bot move rejected (${err.message})`, move);
-      this.fallback(id, now);
-    }
-    this.update();
+  private isBot(id: string): boolean {
+    return this.bots.some((b) => b.id === id);
   }
 
-  private applyBotMove(id: string, move: BotMove, now: number): void {
-    switch (move.t) {
-      case "act":
-        this.game.act(id, move.action, move.amount, now);
-        break;
-      case "power":
-        this.game.playPower(id, move.powerId, { target: move.target, indices: move.indices }, now);
-        break;
-      case "choose":
-        this.game.choose(id, move.index, now);
-        break;
-      case "rebuy":
-        this.game.rebuy(id, move.accept, now);
-        break;
+  /** How long a bot "thinks": long enough to follow, quicker when the human is out of the hand. */
+  private thinkMs(task: BotTask): number {
+    const h = this.game.s.hand;
+    const between = (min: number, max: number) => min + this.botRng.int(max - min + 1);
+    let ms: number;
+    if (task.kind === "rebuy") ms = between(600, 1100);
+    else if (task.kind === "choice") ms = h?.pending?.kind === "engineer" ? between(1800, 2400) : between(900, 1400);
+    else if (this.afterPower.has(task.id)) ms = between(1300, 1900);
+    else {
+      const hp = h?.players.find((p) => p.id === task.id);
+      const facing = h && hp ? h.currentBet - hp.streetBet : 0;
+      const stack = this.game.s.players.find((p) => p.id === task.id)?.chips ?? 0;
+      ms = facing > 0 && facing >= stack / 2 ? between(1500, 2400) : between(800, 1600);
+    }
+    const you = h?.players.find((p) => p.id === this.humanId);
+    return !you || you.folded ? Math.round(ms * 0.6) : ms;
+  }
+
+  private runBot(now: number): void {
+    const due = this.botDue!;
+    this.botDue = null;
+    const bot = this.bots.find((b) => b.id === due.id)!;
+    let move: BotMove | null = null;
+    try {
+      // A private copy: nothing the bot does to it can reach the real state.
+      move = this.policy(structuredClone(buildView(this.game, bot.id, now, this.allIds)), this.botRng, bot.profile, bot.memory);
+    } catch (err) {
+      console.warn("practice bot failed", err);
+    }
+    const before = structuredClone(this.game.s);
+    try {
+      if (!move) throw new GameError("The bot had no move");
+      applyPlayerMessage(this.game, bot.id, move, now);
+      if (move.t === "power") this.afterPower.add(bot.id);
+      else this.afterPower.delete(bot.id);
+    } catch (err) {
+      // A bot mistake must never stall the table: undo it and make the simplest legal move instead.
+      this.game.s = before;
+      this.fallbacks++;
+      console.warn(`practice bot move rejected: ${err instanceof Error ? err.message : err}`, move);
+      this.afterPower.delete(bot.id);
+      this.fallback(bot.id, now);
     }
   }
 
   private fallback(id: string, now: number): void {
-    const h = this.game.s.hand;
-    const p = this.game.s.players.find((x) => x.id === id);
-    if (p?.status === "busted" && !p.rebuyDeclined) {
-      this.game.rebuy(id, true, now);
-      return;
+    const s = this.game.s;
+    const h = s.hand;
+    const p = s.players.find((x) => x.id === id);
+    if (p?.status === "busted" && !p.rebuyDeclined) this.game.rebuy(id, true, now);
+    else if (h?.pending?.playerId === id) this.game.choose(id, h.pending.kind === "scanner" ? null : 0, now);
+    else {
+      const legal = this.game.legal(id);
+      if (legal) this.game.act(id, legal.canCheck ? "check" : "fold", undefined, now);
     }
-    if (h?.pending?.playerId === id) {
-      this.game.choose(id, h.pending.kind === "scanner" ? null : 0, now);
-      return;
-    }
-    const legal = this.game.legal(id);
-    if (legal) this.game.act(id, legal.canCheck ? "check" : "fold", undefined, now);
   }
+
+  /** Tally the human's hand once it's over. Only public facts (results and powers played) are used. */
+  private recordHand(): void {
+    const h = this.game.s.hand;
+    if (!h || h.phase !== "done" || h.number === this.recordedHand) return;
+    this.recordedHand = h.number;
+    const st = this.stats;
+    for (const { playerId, type } of h.powerHistory) {
+      const tally = playerId === this.humanId ? st.powersPlayed : st.powersFaced;
+      tally[type] = (tally[type] ?? 0) + 1;
+    }
+    if (!h.players.some((p) => p.id === this.humanId)) return;
+    st.hands++;
+    const won = h.result?.won[this.humanId] ?? 0;
+    if (won > 0) {
+      st.handsWon++;
+      st.biggestWin = Math.max(st.biggestWin, won);
+    }
+  }
+}
+
+function minOf(...times: (number | null)[]): number | null {
+  let min: number | null = null;
+  for (const t of times) if (t !== null && (min === null || t < min)) min = t;
+  return min;
 }

@@ -19,13 +19,11 @@ interface Props {
   conn: TableConnection;
   /** Set for a practice game against bots: changes the menu (no invite links) and the labels. */
   practice?: PracticeControls;
-  /** Extra content between the table and your controls (practice tips). */
-  belowTable?: ReactNode;
-  /** Extra overlay content (practice end-of-session card). */
-  overlay?: ReactNode;
+  /** Floats over the table without moving anything (practice tips). */
+  floating?: ReactNode;
 }
 
-export function GameTable({ conn, practice, belowTable, overlay }: Props) {
+export function GameTable({ conn, practice, floating }: Props) {
   const v = conn.view!;
   const { send } = conn;
   useTicker(200);
@@ -156,12 +154,12 @@ export function GameTable({ conn, practice, belowTable, overlay }: Props) {
             setSelectedId(null);
           }} winningCards={winningCards} />
           <Announcer log={v.log} onNew={onNewLog} />
+          {floating}
         </div>
         <aside className={logOpen ? "side is-open" : "side"}>
           <LogPanel log={v.log} onClose={() => setLogOpen(false)} />
         </aside>
       </div>
-      {belowTable}
       {me && you ? (
         <MyPanel view={v} send={send} power={power} timeLeft={timeLeftFor(you.id)} winningCards={winningCards} />
       ) : (
@@ -170,7 +168,6 @@ export function GameTable({ conn, practice, belowTable, overlay }: Props) {
         </div>
       )}
       <Overlays view={v} send={send} serverNow={now} />
-      {overlay}
     </div>
   );
 }

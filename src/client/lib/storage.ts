@@ -53,3 +53,17 @@ export function getPref(key: string, fallback: boolean): boolean {
 export function setPref(key: string, value: boolean): void {
   write(`powerup:pref:${key}`, value ? "1" : "0");
 }
+
+export function getJson<T>(key: string, fallback: T): T {
+  const v = read(`powerup:${key}`);
+  if (v === null) return fallback;
+  try {
+    return JSON.parse(v) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export function setJson(key: string, value: unknown): void {
+  write(`powerup:${key}`, value === null ? null : JSON.stringify(value));
+}

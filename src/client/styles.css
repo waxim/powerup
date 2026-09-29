@@ -2960,23 +2960,95 @@ button.power {
   margin-bottom: 4px;
 }
 
-.coach {
+.try-intro {
+  margin: 0 0 14px;
+  padding-left: 1.1em;
+  color: #dbe3ff;
+  line-height: 1.45;
+}
+
+.try-intro li {
+  margin-bottom: 4px;
+}
+
+.check-field {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin: 4px 0 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.check-field input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--gold);
+}
+
+.check-field .link-button {
+  margin-left: auto;
+  font-size: 0.85rem;
+}
+
+.check-field .link-button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* The practice badge takes the logo's place in the top bar. */
+.practice-pill {
   flex: none;
-  position: relative;
-  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  padding: 3px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 225, 255, 0.45);
+  background: rgba(56, 225, 255, 0.08);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.practice-pill span {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+/* Tips float over the bottom of the table, above the seats, without moving anything. */
+.coach {
+  position: absolute;
+  z-index: 35;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(calc(100% - 16px), 520px);
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 0 8px 6px;
   padding: 8px 8px 8px 12px;
   border-radius: 14px;
-  background: linear-gradient(90deg, rgba(255, 209, 102, 0.16), rgba(56, 225, 255, 0.08));
-  border: 1px solid rgba(255, 209, 102, 0.5);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  background: linear-gradient(90deg, rgba(58, 48, 14, 0.96), rgba(12, 30, 48, 0.96));
+  border: 1px solid rgba(255, 209, 102, 0.6);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   font-weight: 600;
   font-size: 0.92rem;
-  line-height: 1.25;
-  animation: toast-in 0.25s ease-out;
+  line-height: 1.3;
+  animation: coach-in 0.25s ease-out;
+}
+
+@keyframes coach-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
 }
 
 .coach-icon {
@@ -2997,12 +3069,12 @@ button.power {
   background: rgba(5, 9, 22, 0.6);
   color: var(--text);
   border-radius: 10px;
-  min-height: 34px;
+  min-height: 40px;
   cursor: pointer;
 }
 
 .coach-next {
-  padding: 0 10px;
+  padding: 0 12px;
   font-family: var(--font-display);
   font-size: 0.7rem;
   font-weight: 700;
@@ -3011,24 +3083,133 @@ button.power {
 }
 
 .coach-off {
-  width: 34px;
+  width: 40px;
   display: grid;
   place-items: center;
   color: var(--muted);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .coach {
+    animation: none;
+  }
+}
+
+/* Desktop: bottom-right, opposite the power banners in the bottom-left. */
+@media (min-width: 1100px) and (min-height: 620px) {
+  .coach {
+    left: auto;
+    right: 16px;
+    bottom: 14px;
+    transform: none;
+    width: min(calc(100% - 32px), 420px);
+    animation-name: coach-in-corner;
+  }
+}
+
+@keyframes coach-in-corner {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 @media (orientation: landscape) and (max-height: 540px) {
-  .game > .coach {
-    grid-column: 1;
-    grid-row: 2;
-    margin: 4px 8px;
+  .coach {
     font-size: 0.8rem;
+  }
+
+  .practice-pill {
+    flex-direction: row;
+    gap: 6px;
+    align-items: baseline;
   }
 }
 
 @media (max-height: 700px) and (orientation: portrait) {
   .coach {
-    font-size: 0.82rem;
+    font-size: 0.84rem;
     padding: 6px 6px 6px 10px;
   }
+}
+
+.try-summary {
+  width: min(100%, 460px);
+}
+
+.try-headline {
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.05rem;
+  margin: 4px 0 12px;
+}
+
+.try-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.try-stats div {
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(5, 9, 22, 0.5);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.try-stats dt {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.try-stats dd {
+  margin: 2px 0 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.05rem;
+}
+
+.try-powers h3 {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.try-powers ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.try-powers li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--power) 60%, transparent);
+  background: color-mix(in srgb, var(--power) 14%, transparent);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.try-powers li svg {
+  color: var(--power);
+}
+
+.try-powers small {
+  color: var(--muted);
+}
+
+.try-actions {
+  flex-direction: column;
+  align-items: stretch;
 }

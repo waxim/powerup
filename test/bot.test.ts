@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { newBotMemory, pickOpponents, practiceBot } from "../src/client/practice/bot";
+import { newBotMemory, pickOpponents, practiceBot, readActions } from "../src/client/practice/bot";
 import { LocalTable, type BotMove, type BotPolicy } from "../src/client/practice/localTable";
 import { preflopEquity, preflopPercentile } from "../src/client/practice/preflop";
 import { Game } from "../src/engine/game";
@@ -331,5 +331,27 @@ describe("practice bots, over whole sessions", () => {
     const median = gaps[Math.floor(gaps.length / 2)];
     expect(median).toBeGreaterThanOrEqual(500);
     expect(median).toBeLessThanOrEqual(2000);
+  }, 60_000);
+});
+
+describe("reading the table log", () => {
+  it("agrees with the engine about who raised and who bet (guards the log wording the bots rely on)", () => {
+    let checked = 0;
+    for (const seed of [31, 32, 33]) {
+      const { decisions } = traced(3, seed, 3);
+      for (const d of decisions) {
+        const h = d.view.hand;
+        if (!h || h.phase !== "betting") continue;
+        const { preflop, bettors } = readActions(d.view);
+        for (const p of d.view.players) {
+          const last = p.lastAction ?? "";
+          if (h.street === "preflop" && /^Raise|^Bet/.test(last)) expect(preflop.get(p.id), `${p.name}: ${last}`).toBe("raise");
+          if (h.street === "preflop" && /^Call/.test(last)) expect(["call-raise", "limp"]).toContain(preflop.get(p.id));
+          if (h.street !== "preflop" && /^Raise|^Bet/.test(last)) expect(bettors.has(p.id), `${p.name}: ${last}`).toBe(true);
+          checked++;
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(200);
   }, 60_000);
 });

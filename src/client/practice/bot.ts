@@ -355,7 +355,7 @@ const WARMUP_HANDS = 2;
 type PreflopAction = "raise" | "call-raise" | "limp" | "check";
 
 /** How each player has acted this hand, from the public log (actions since this hand was dealt). */
-function readActions(view: TableView): { preflop: Map<string, PreflopAction>; bettors: Set<string> } {
+export function readActions(view: TableView): { preflop: Map<string, PreflopAction>; bettors: Set<string> } {
   const preflop = new Map<string, PreflopAction>();
   const bettors = new Set<string>();
   const log = view.log;

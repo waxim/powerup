@@ -123,3 +123,73 @@ export function bestHand(cards: Card[]): HandValue {
   best!.label = describeHand(best!.category, best!.ranks);
   return best!;
 }
+
+/** Highest straight in a set of ranks (14..2), or 0. Handles the A-2-3-4-5 wheel. */
+function highestStraight(present: boolean[]): number {
+  for (let high = 14; high >= 6; high--) {
+    if (present[high] && present[high - 1] && present[high - 2] && present[high - 3] && present[high - 4]) return high;
+  }
+  return present[14] && present[2] && present[3] && present[4] && present[5] ? 5 : 0;
+}
+
+/**
+ * Score of the best five-card hand, identical to `bestHand(cards).score` but computed in one pass
+ * without enumerating subsets. Used where speed matters (bot equity simulations).
+ */
+export function handScore(cards: Card[]): number {
+  if (cards.length < 5) return bestHand(cards).score;
+  const counts = new Array<number>(15).fill(0);
+  const bySuit: Record<string, number[]> = { s: [], h: [], d: [], c: [] };
+  for (const c of cards) {
+    const r = rankOf(c);
+    counts[r]++;
+    bySuit[suitOf(c)].push(r);
+  }
+  for (const suit of ["s", "h", "d", "c"]) {
+    const ranks = bySuit[suit];
+    if (ranks.length < 5) continue;
+    const present = new Array<boolean>(15).fill(false);
+    for (const r of ranks) present[r] = true;
+    const sf = highestStraight(present);
+    if (sf) return makeScore(HandCategory.StraightFlush, [sf]);
+    // At most one suit can hold five or more of nine cards; remember it for the flush check below.
+    const flush = ranks.sort((a, b) => b - a).slice(0, 5);
+    return scoreWithoutFlush(counts, flush);
+  }
+  return scoreWithoutFlush(counts, null);
+}
+
+function scoreWithoutFlush(counts: number[], flush: number[] | null): number {
+  const quads: number[] = [];
+  const trips: number[] = [];
+  const pairs: number[] = [];
+  const singles: number[] = [];
+  const present = new Array<boolean>(15).fill(false);
+  for (let r = 14; r >= 2; r--) {
+    const n = counts[r];
+    if (!n) continue;
+    present[r] = true;
+    if (n === 4) quads.push(r);
+    else if (n === 3) trips.push(r);
+    else if (n === 2) pairs.push(r);
+    else singles.push(r);
+  }
+  const bestOthers = (exclude: number[], take: number): number[] => {
+    const out: number[] = [];
+    for (let r = 14; r >= 2 && out.length < take; r--) if (counts[r] && !exclude.includes(r)) out.push(r);
+    return out;
+  };
+  if (quads.length) return makeScore(HandCategory.Quads, [quads[0], ...bestOthers([quads[0]], 1)]);
+  if (trips.length && (trips.length > 1 || pairs.length)) {
+    const t = trips[0];
+    const p = Math.max(trips[1] ?? 0, pairs[0] ?? 0);
+    return makeScore(HandCategory.FullHouse, [t, p]);
+  }
+  if (flush) return makeScore(HandCategory.Flush, flush);
+  const straight = highestStraight(present);
+  if (straight) return makeScore(HandCategory.Straight, [straight]);
+  if (trips.length) return makeScore(HandCategory.Trips, [trips[0], ...bestOthers([trips[0]], 2)]);
+  if (pairs.length >= 2) return makeScore(HandCategory.TwoPair, [pairs[0], pairs[1], ...bestOthers([pairs[0], pairs[1]], 1)]);
+  if (pairs.length) return makeScore(HandCategory.Pair, [pairs[0], ...bestOthers([pairs[0]], 3)]);
+  return makeScore(HandCategory.HighCard, singles.slice(0, 5));
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { HandCategory, bestHand } from "../src/engine/evaluator";
-import type { Card } from "../src/shared/cards";
+import { HandCategory, bestHand, handScore } from "../src/engine/evaluator";
+import { seededRng, shuffle } from "../src/engine/rng";
+import { fullDeck, type Card } from "../src/shared/cards";
 
 const h = (s: string) => s.split(" ") as Card[];
 const best = (s: string) => bestHand(h(s));
@@ -70,5 +71,33 @@ describe("hand evaluator", () => {
 
   it("ties identical hands", () => {
     expect(best("Ah Kd 9c 7s 2h").score).toBe(best("As Kc 9d 7h 2c").score);
+  });
+});
+
+describe("fast hand score", () => {
+  it("matches the exhaustive evaluator on 200,000 random hands of 5 to 9 cards", () => {
+    const rng = seededRng(99);
+    const deck = fullDeck();
+    for (let i = 0; i < 200_000; i++) {
+      const n = 5 + (i % 5);
+      const cards = shuffle(deck, rng).slice(0, n);
+      const expected = bestHand(cards).score;
+      const got = handScore(cards);
+      if (got !== expected) throw new Error(`${cards.join(" ")}: fast ${got} != exhaustive ${expected}`);
+    }
+  }, 60_000);
+
+  it("handles the tricky cases", () => {
+    for (const hand of [
+      "Ah 2d 3s 4c 5h 9d Kc", // wheel
+      "9h 9d 9s 5c 5h 5d 2c", // two trips -> full house nines full of fives
+      "Kh Kd Ks Kc Qh Qd Qs", // quads with trips kicker
+      "Ah Kh Qh Jh 9h 8h 2c", // six-card flush: best five
+      "Th Jh Qh Kh Ah 9h 8h 7h 6h", // nine hearts: royal
+      "2c 2d 3c 3d 4c 4d Ah", // three pairs: kicker from a pair
+    ]) {
+      const cards = hand.split(" ") as Card[];
+      expect(handScore(cards)).toBe(bestHand(cards).score);
+    }
   });
 });

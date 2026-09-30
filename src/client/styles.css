@@ -1242,6 +1242,9 @@ button.power {
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
+  /* Short landscape screens: scroll rather than run off the bottom. */
+  max-height: calc(100dvh - 72px);
+  overflow-y: auto;
 }
 
 .menu-info {
@@ -2930,4 +2933,552 @@ button.power {
   .center {
     top: 51%;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Practice mode                                                       */
+/* ------------------------------------------------------------------ */
+.try-cta {
+  margin-top: 18px;
+  border-color: rgba(56, 225, 255, 0.45);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 0.9rem;
+}
+
+.try-setup h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.try-facts {
+  margin: 4px 0 8px;
+  padding-left: 1.1em;
+  color: #c3cdf2;
+  font-size: 0.95rem;
+}
+
+.try-facts li {
+  margin-bottom: 4px;
+}
+
+.try-intro {
+  margin: 0 0 14px;
+  padding-left: 1.1em;
+  color: #dbe3ff;
+  line-height: 1.45;
+}
+
+.try-intro li {
+  margin-bottom: 4px;
+}
+
+.check-field {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin: 4px 0 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.check-field label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.check-field input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--gold);
+}
+
+.check-field .link-button {
+  margin-left: auto;
+  font-size: 0.85rem;
+}
+
+.check-field .link-button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* The practice badge takes the logo's place in the top bar. */
+.practice-pill {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  padding: 3px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 225, 255, 0.45);
+  background: rgba(56, 225, 255, 0.08);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.practice-pill span {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+/* Tips, the Hint and the Next hand chip float over the bottom of the table, above the seats, without moving anything. */
+.practice-float {
+  position: absolute;
+  /* Above the seats and your panel, below the top bar and its menu. */
+  z-index: 15;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.practice-float > * {
+  pointer-events: auto;
+}
+
+.practice-chips {
+  display: flex;
+  gap: 8px;
+  align-self: flex-end;
+}
+
+.practice-chips:empty {
+  display: none;
+}
+
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 225, 255, 0.5);
+  background: rgba(8, 16, 36, 0.92);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.chip-hint {
+  border-color: rgba(255, 209, 102, 0.6);
+}
+
+.chip-hint svg {
+  color: var(--gold);
+}
+
+/* While picking a board card to destroy, tips move out of the way to the top of the table. */
+.table-area.is-targeting .practice-float {
+  top: 8px;
+  bottom: auto;
+  flex-direction: column-reverse;
+}
+
+.coach {
+  width: min(100%, 520px);
+  max-height: 34vh;
+  overflow-y: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(58, 48, 14, 0.96), rgba(12, 30, 48, 0.96));
+  border: 1px solid rgba(255, 209, 102, 0.6);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-weight: 600;
+  font-size: 0.92rem;
+  line-height: 1.3;
+  animation: coach-in 0.25s ease-out;
+}
+
+@keyframes coach-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.coach-hint {
+  border-color: rgba(56, 225, 255, 0.6);
+  background: linear-gradient(90deg, rgba(10, 36, 58, 0.97), rgba(20, 24, 56, 0.97));
+}
+
+.coach-hint strong {
+  color: var(--cyan);
+}
+
+/* What a tip is talking about gets a pulsing ring. */
+.coach-spot {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+  border-radius: 12px;
+  animation: coach-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes coach-pulse {
+  50% {
+    outline-color: rgba(255, 209, 102, 0.25);
+  }
+}
+
+.coach-icon {
+  flex: none;
+  color: var(--gold);
+  filter: drop-shadow(0 0 6px rgba(255, 209, 102, 0.7));
+}
+
+.coach-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.coach-next,
+.coach-off {
+  flex: none;
+  border: 1px solid var(--line-strong);
+  background: rgba(5, 9, 22, 0.6);
+  color: var(--text);
+  border-radius: 10px;
+  min-height: 40px;
+  cursor: pointer;
+}
+
+.coach-next {
+  padding: 0 12px;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.coach-off {
+  width: 40px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coach,
+  .coach-spot {
+    animation: none;
+  }
+}
+
+/* Desktop: bottom-right, opposite the power banners in the bottom-left. */
+@media (min-width: 1100px) and (min-height: 620px) {
+  .practice-float {
+    left: auto;
+    right: 16px;
+    bottom: 14px;
+    width: min(calc(100% - 32px), 420px);
+    align-items: flex-end;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 540px) {
+  .coach {
+    font-size: 0.8rem;
+  }
+
+  .practice-pill {
+    flex-direction: row;
+    gap: 6px;
+    align-items: baseline;
+  }
+}
+
+@media (max-height: 700px) and (orientation: portrait) {
+  .coach {
+    font-size: 0.84rem;
+    padding: 6px 6px 6px 10px;
+  }
+}
+
+.try-summary {
+  width: min(100%, 460px);
+}
+
+.try-headline {
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.05rem;
+  margin: 4px 0 12px;
+}
+
+.try-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.try-stats div {
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(5, 9, 22, 0.5);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.try-stats dt {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.try-stats dd {
+  margin: 2px 0 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.05rem;
+}
+
+.try-powers h3 {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.try-powers ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.try-powers li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--power) 60%, transparent);
+  background: color-mix(in srgb, var(--power) 14%, transparent);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.try-powers li svg {
+  color: var(--power);
+}
+
+.try-powers small {
+  color: var(--muted);
+}
+
+.try-actions {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.try-stat-text {
+  font-size: 0.85rem !important;
+  line-height: 1.2;
+}
+
+.try-pot {
+  margin: 0 0 12px;
+  text-align: center;
+  color: #c3cdf2;
+}
+
+.try-powers li.is-faced {
+  background: transparent;
+}
+
+.try-powers li.is-unseen {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--line-strong);
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.try-powers li.is-unseen svg {
+  color: var(--muted);
+}
+
+.try-new {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--gold);
+  color: #1a1300;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Cheat sheet: a bottom sheet over the practice table. */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(3, 5, 14, 0.6);
+}
+
+.sheet {
+  width: min(100%, 560px);
+  max-height: 90dvh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px 20px 0 0;
+  background: linear-gradient(180deg, #152049, #0b1128);
+  border: 1px solid var(--line-strong);
+  border-bottom: 0;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
+  padding-bottom: env(safe-area-inset-bottom);
+  animation: coach-in 0.2s ease-out;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 12px 8px 16px;
+}
+
+.sheet-head .segmented {
+  flex: 1;
+  max-width: 260px;
+}
+
+.sheet-body {
+  overflow-y: auto;
+  padding: 0 16px 16px;
+}
+
+.sheet-powers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.sheet-powers li {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(5, 9, 22, 0.45);
+}
+
+.sheet-powers li.is-held {
+  border-color: color-mix(in srgb, var(--power) 70%, transparent);
+  background: color-mix(in srgb, var(--power) 10%, rgba(5, 9, 22, 0.45));
+}
+
+.sheet-powers p {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+}
+
+.sheet-powers strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sheet-powers em {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--power);
+  font-weight: 700;
+}
+
+.sheet-power-icon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--power);
+  background: color-mix(in srgb, var(--power) 16%, transparent);
+}
+
+.sheet-cost {
+  color: var(--gold);
+  font-size: 0.85rem;
+}
+
+.sheet-tried {
+  color: var(--green, #4ade80);
+}
+
+.hand-rankings {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.hand-rankings li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  background: rgba(5, 9, 22, 0.4);
+  border: 1px solid var(--line);
+}
+
+.hand-rank-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hand-rank-text span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.hand-rank-cards {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+
+.practice-wait {
+  flex-basis: 100%;
+  order: 2;
+  font-size: 0.9rem;
 }

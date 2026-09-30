@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, Zap } from "lucide-react";
+import { ArrowRight, BookOpen, Bot, Zap } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import { MODE_RULES, POWERS, POWER_TYPES, type PowerType } from "../../shared/powers";
 import {
@@ -15,6 +15,7 @@ import {
   type TableSettings,
 } from "../../shared/settings";
 import { PowerCard } from "../components/PowerCard";
+import { TryLink } from "../components/TryLink";
 import { chips } from "../lib/format";
 import { linkHandler, navigate } from "../lib/router";
 import { getSavedName, saveName, setSeatToken } from "../lib/storage";
@@ -114,6 +115,9 @@ export function Home() {
         <Logo />
         <p className="hero-tag">Texas hold'em with game-changing powers.</p>
         <p className="hero-sub">Create a table, share the link, and your friends join with just a name. No accounts, no downloads.</p>
+        <TryLink className="btn btn-ghost try-cta">
+          <Bot size={18} aria-hidden /> New to PowerUp? Try it against bots
+        </TryLink>
       </header>
 
       <form className="panel-card create" onSubmit={submit}>

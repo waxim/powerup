@@ -1,5 +1,5 @@
 import { Eye, Zap } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Card } from "../../shared/cards";
 import type { LogEntry } from "../../shared/protocol";
 import { chips } from "../lib/format";
@@ -13,9 +13,17 @@ import { LogPanel } from "./LogPanel";
 import { MyPanel, type PowerSelection } from "./MyPanel";
 import { Overlays } from "./Overlays";
 import { Seat } from "./Seat";
-import { TopBar } from "./TopBar";
+import { TopBar, type PracticeControls } from "./TopBar";
 
-export function GameTable({ conn }: { conn: TableConnection }) {
+interface Props {
+  conn: TableConnection;
+  /** Set for a practice game against bots: changes the menu (no invite links) and the labels. */
+  practice?: PracticeControls;
+  /** Floats over the table without moving anything (practice tips). */
+  floating?: ReactNode;
+}
+
+export function GameTable({ conn, practice, floating }: Props) {
   const v = conn.view!;
   const { send } = conn;
   useTicker(200);
@@ -50,6 +58,10 @@ export function GameTable({ conn }: { conn: TableConnection }) {
     setSelectedId(null);
     setReloadPick([]);
   }, [h?.number, h?.street, myTurn]);
+  const onPowerSelect = practice?.onPowerSelect;
+  useEffect(() => {
+    if (!selectedId) onPowerSelect?.(null);
+  }, [selectedId, onPowerSelect]);
 
   const selected = me?.powers.find((p) => p.id === selectedId && p.playable) ?? null;
   const power: PowerSelection = {
@@ -57,6 +69,8 @@ export function GameTable({ conn }: { conn: TableConnection }) {
     select: (id) => {
       setSelectedId(id);
       setReloadPick([]);
+      const picked = me?.powers.find((p) => p.id === id && p.playable);
+      if (picked) practice?.onPowerSelect?.(picked.type);
     },
     reloadPick,
     toggleReload: (i) => setReloadPick((pick) => (pick.includes(i) ? pick.filter((x) => x !== i) : [...pick, i].slice(-2))),
@@ -108,6 +122,7 @@ export function GameTable({ conn }: { conn: TableConnection }) {
         sound={sound}
         setSound={setSound}
         onToggleLog={() => setLogOpen((o) => !o)}
+        practice={practice}
       />
       {!you && (
         <div className="banner banner-info">
@@ -123,7 +138,7 @@ export function GameTable({ conn }: { conn: TableConnection }) {
         </div>
       )}
       <div className="game-main">
-        <div className={`table-area seats-${ordered.length}`}>
+        <div className={`table-area seats-${ordered.length}${targets ? " is-targeting" : ""}`}>
           <div className={`felt ${h?.empBy ? "is-emp" : ""}`} aria-hidden />
           {ordered.map((p, i) => {
             const geo = seatGeometry(ordered.length, i);
@@ -145,6 +160,7 @@ export function GameTable({ conn }: { conn: TableConnection }) {
             setSelectedId(null);
           }} winningCards={winningCards} />
           <Announcer log={v.log} onNew={onNewLog} />
+          {floating}
         </div>
         <aside className={logOpen ? "side is-open" : "side"}>
           <LogPanel log={v.log} onClose={() => setLogOpen(false)} />
@@ -157,7 +173,7 @@ export function GameTable({ conn }: { conn: TableConnection }) {
           <Zap size={16} aria-hidden /> Spectating · {v.players.filter((p) => p.status === "playing").length} players left
         </div>
       )}
-      <Overlays view={v} send={send} serverNow={now} />
+      <Overlays view={v} send={send} serverNow={now} practice={!!practice} />
     </div>
   );
 }

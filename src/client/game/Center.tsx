@@ -30,7 +30,7 @@ export function Center({ view, targets, onTarget, winningCards }: Props) {
 
   return (
     <div className="center">
-      <div className={targets ? "board is-targeting" : "board"}>
+      <div className={targets ? "board is-targeting" : "board"} data-coach="board">
         {h.board.map((b, i) => {
           const target = targets?.includes(i) ?? false;
           return (

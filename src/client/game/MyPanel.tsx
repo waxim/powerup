@@ -25,7 +25,7 @@ interface Props {
 
 function EnergyMeter({ energy, max }: { energy: number; max: number }) {
   return (
-    <div className="energy" title={`${energy} of ${max} energy`}>
+    <div className="energy" title={`${energy} of ${max} energy`} data-coach="energy">
       <Zap size={16} aria-hidden className="energy-bolt" />
       <span className="energy-num">{energy}</span>
       <span className="energy-bar" aria-hidden>
@@ -121,12 +121,12 @@ export function MyPanel({ view, send, power, timeLeft, winningCards }: Props) {
           )}
         </div>
         <div className="my-stats">
-          <div className="my-hand">{inHand && me.handLabel ? me.handLabel : you.folded ? "Folded" : "\u00a0"}</div>
+          <div className="my-hand" data-coach="hand-label">{inHand && me.handLabel ? me.handLabel : you.folded ? "Folded" : "\u00a0"}</div>
           <EnergyMeter energy={me.energy} max={view.rules.maxEnergy} />
         </div>
       </div>
 
-      <div className="my-powers" role="group" aria-label="Your powers">
+      <div className="my-powers" role="group" aria-label="Your powers" data-coach="powers">
         {me.powers.map((p) => (
           <PowerCard
             key={p.id}

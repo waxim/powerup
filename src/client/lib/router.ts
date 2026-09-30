@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 
-export type Route = { name: "home" } | { name: "rules" } | { name: "table"; id: string } | { name: "notfound" };
+export type Route = { name: "home" } | { name: "rules" } | { name: "try" } | { name: "table"; id: string } | { name: "notfound" };
 
 function parse(pathname: string): Route {
   if (pathname === "/" || pathname === "") return { name: "home" };
   if (pathname === "/rules" || pathname === "/rules/") return { name: "rules" };
+  if (pathname === "/try" || pathname === "/try/") return { name: "try" };
   const m = pathname.match(/^\/t\/([a-z0-9]{6,16})\/?$/);
   if (m) return { name: "table", id: m[1] };
   return { name: "notfound" };
